@@ -1,0 +1,14 @@
+/Users/gundeepsingh/github/gndps/git-worktree-pro/target/debug/deps/serde-d1751a356b8e1580.d: /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/gundeepsingh/github/gndps/git-worktree-pro/target/debug/build/serde-2beb76a2a4a45d11/out/private.rs
+
+/Users/gundeepsingh/github/gndps/git-worktree-pro/target/debug/deps/libserde-d1751a356b8e1580.rlib: /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/gundeepsingh/github/gndps/git-worktree-pro/target/debug/build/serde-2beb76a2a4a45d11/out/private.rs
+
+/Users/gundeepsingh/github/gndps/git-worktree-pro/target/debug/deps/libserde-d1751a356b8e1580.rmeta: /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/gundeepsingh/github/gndps/git-worktree-pro/target/debug/build/serde-2beb76a2a4a45d11/out/private.rs
+
+/Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/gundeepsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/gundeepsingh/github/gndps/git-worktree-pro/target/debug/build/serde-2beb76a2a4a45d11/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/gundeepsingh/github/gndps/git-worktree-pro/target/debug/build/serde-2beb76a2a4a45d11/out
