@@ -1,5 +1,6 @@
 mod config;
 mod diff;
+mod dotfiles;
 mod git;
 mod list;
 mod navigate;
@@ -141,6 +142,11 @@ enum Commands {
         /// Slug to set (omit to get current slug)
         name: Option<String>,
     },
+    /// Edit managed dotfiles in the configured editor [dotfiles edit]
+    Dotfiles {
+        /// Subcommand: edit [path]
+        args: Vec<String>,
+    },
     /// Show prompt info for shell / oh-my-posh integration
     Prompt {
         /// Output format: small (default), medium (banner), json
@@ -260,6 +266,10 @@ fn main() {
                 Some(text.join(" "))
             };
             notes::cmd_note(note);
+        }
+        Commands::Dotfiles { args } => {
+            require_git();
+            dotfiles::cmd_dotfiles(&args, &cfg);
         }
         Commands::Slug { name } => {
             slug::cmd_slug(name);
