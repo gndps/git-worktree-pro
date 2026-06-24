@@ -1,4 +1,4 @@
-use crate::config::{load_config, GwtpConfig};
+use crate::config::load_config;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -131,47 +131,6 @@ pub fn sync_via_patterns(
     if skipped > 0 {
         eprintln!("   ⏭️  Skipped {} file(s) (already exist)", skipped);
     }
-}
-
-/// Returns relative paths (from worktree root) of all managed files —
-/// .env* files + files matching sync_patterns — deduplicated and sorted.
-pub fn list_managed_files(worktree_root: &str, config: &GwtpConfig) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
-
-    // Auto-synced: .env* files
-    for f in find_env_files(Path::new(worktree_root)) {
-        if let Ok(rel) = f.strip_prefix(worktree_root) {
-            result.push(rel.to_string_lossy().to_string());
-        }
-    }
-
-    // sync_patterns expansion via git ls-files
-    if !config.sync_patterns.is_empty() {
-        use std::io::Write;
-        let tmp = std::env::temp_dir().join("gwtp_ls_tmp.gitignore");
-        if let Ok(mut f) = fs::File::create(&tmp) {
-            for p in &config.sync_patterns {
-                let _ = writeln!(f, "{}", p);
-            }
-        }
-        let out = Command::new("git")
-            .current_dir(worktree_root)
-            .args(["ls-files", "--others", "--ignored", "--exclude-from"])
-            .arg(&tmp)
-            .output();
-        let _ = fs::remove_file(&tmp);
-        if let Ok(o) = out {
-            for line in String::from_utf8_lossy(&o.stdout).lines() {
-                if !line.is_empty() {
-                    result.push(line.to_string());
-                }
-            }
-        }
-    }
-
-    result.sort();
-    result.dedup();
-    result
 }
 
 pub fn copy_paths_to(source: &str, target: &str, abs_paths: &[PathBuf]) {
