@@ -1,6 +1,11 @@
 use crate::config::GwtpConfig;
-use crate::worktree::{get_wt_config_date, get_wt_config_mtime, get_wt_note, get_wt_status, is_worktree_hidden, sorted_worktrees, Worktree};
+use crate::worktree::{
+    get_wt_config_date, get_wt_config_mtime, get_wt_note, get_wt_status, is_worktree_hidden,
+    sorted_worktrees, Worktree,
+};
 use std::process::Command;
+use std::sync::Arc;
+use std::thread;
 
 pub const YELLOW: &str = "\x1b[33m";
 pub const CYAN_BOLD: &str = "\x1b[1;36m";
@@ -8,8 +13,6 @@ pub const DIM: &str = "\x1b[2m";
 pub const SKY_BLUE: &str = "\x1b[38;5;117m";
 pub const GRAY: &str = "\x1b[38;5;245m";
 pub const RESET: &str = "\x1b[0m";
-pub const GREEN_BOLD: &str = "\x1b[1;32m";
-pub const MAGENTA: &str = "\x1b[35m";
 pub const WHITE: &str = "\x1b[0;37m";
 pub const RED: &str = "\x1b[31m";
 
@@ -20,14 +23,18 @@ pub fn cmd_list(show_all: bool, show_status: bool, config: &GwtpConfig) {
         std::process::exit(1);
     }
     let current_root = crate::git::git_toplevel().unwrap_or_default();
-    let visible: Vec<(usize, &Worktree)> = wts
-        .iter()
+    let visible: Vec<(usize, Arc<Worktree>)> = wts
+        .into_iter()
         .enumerate()
         .filter(|(_, wt)| {
             show_all
-                || !is_worktree_hidden(wt, &config.hidden_wt_prefixes, &config.hidden_branch_prefixes)
+                || !is_worktree_hidden(
+                    wt,
+                    &config.hidden_wt_prefixes,
+                    &config.hidden_branch_prefixes,
+                )
         })
-        .map(|(i, wt)| (i + 1, wt))
+        .map(|(i, wt)| (i + 1, Arc::new(wt)))
         .collect();
 
     let show_dates = {
@@ -39,13 +46,30 @@ pub fn cmd_list(show_all: bool, show_status: bool, config: &GwtpConfig) {
         mtimes.len() > 1 && mtimes.windows(2).any(|w| w[0] != w[1])
     };
 
-    for (num, wt) in &visible {
+    // Fetch statuses in parallel when --status is requested
+    let statuses: Vec<String> = if show_status {
+        let handles: Vec<_> = visible
+            .iter()
+            .map(|(_, wt)| {
+                let path = wt.path.clone();
+                thread::spawn(move || get_wt_status(&path))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_default())
+            .collect()
+    } else {
+        visible.iter().map(|_| String::new()).collect()
+    };
+
+    for (idx, (num, wt)) in visible.iter().enumerate() {
         let marker = if wt.path == current_root { "*" } else { " " };
         let bd = wt.display_branch();
         let note = get_wt_note(&wt.path).unwrap_or_default();
 
         if show_status {
-            let status = get_wt_status(&wt.path);
+            let status = &statuses[idx];
             if !status.is_empty() {
                 println!(
                     "{}[{}{}]{} {}{}{}  {}{}{}",
@@ -83,12 +107,16 @@ pub fn cmd_list_detail(show_all: bool, config: &GwtpConfig) {
         eprintln!("❌ Not in a git repository.");
         std::process::exit(1);
     }
-    let visible: Vec<(usize, &Worktree)> = wts
-        .iter()
+    let visible: Vec<(usize, Worktree)> = wts
+        .into_iter()
         .enumerate()
         .filter(|(_, wt)| {
             show_all
-                || !is_worktree_hidden(wt, &config.hidden_wt_prefixes, &config.hidden_branch_prefixes)
+                || !is_worktree_hidden(
+                    wt,
+                    &config.hidden_wt_prefixes,
+                    &config.hidden_branch_prefixes,
+                )
         })
         .map(|(i, wt)| (i + 1, wt))
         .collect();
@@ -123,12 +151,16 @@ pub fn cmd_list_log(show_all: bool, config: &GwtpConfig) {
         eprintln!("❌ Not in a git repository.");
         std::process::exit(1);
     }
-    let visible: Vec<(usize, &Worktree)> = wts
-        .iter()
+    let visible: Vec<(usize, Worktree)> = wts
+        .into_iter()
         .enumerate()
         .filter(|(_, wt)| {
             show_all
-                || !is_worktree_hidden(wt, &config.hidden_wt_prefixes, &config.hidden_branch_prefixes)
+                || !is_worktree_hidden(
+                    wt,
+                    &config.hidden_wt_prefixes,
+                    &config.hidden_branch_prefixes,
+                )
         })
         .map(|(i, wt)| (i + 1, wt))
         .collect();
@@ -145,9 +177,11 @@ pub fn cmd_list_log(show_all: bool, config: &GwtpConfig) {
         let log_out = Command::new("git")
             .current_dir(&wt.path)
             .args([
-                "log", "--color=always",
+                "log",
+                "--color=always",
                 "--format=%C(yellow)%h %C(green)%ad %C(blue)%an %C(cyan)%s",
-                "-n", "5",
+                "-n",
+                "5",
             ])
             .output();
         if let Ok(o) = log_out {
@@ -158,15 +192,15 @@ pub fn cmd_list_log(show_all: bool, config: &GwtpConfig) {
     }
 }
 
-// ── Tree view ────────────────────────────────────────────────────────────────
+// ── Tree view ─────────────────────────────────────────────────────────────────
 
 struct TreeNode {
-    wt_idx: usize,   // index into wts array
+    wt_idx: usize,
     id: usize,
-    parent_idx: Option<usize>,  // index into tree_nodes
+    parent_idx: Option<usize>,
     base_sha: Option<String>,
     note: String,
-    children: Vec<usize>,  // indices into tree_nodes
+    children: Vec<usize>,
 }
 
 fn shorten_path(full: &str, root: &str) -> String {
@@ -188,9 +222,13 @@ fn get_logs(path: &str, max: usize, base_sha: Option<&str>) -> Vec<String> {
     let n = max.to_string();
     let base_arg;
     let mut args: Vec<&str> = vec![
-        "log", "--date=short", "--abbrev-commit", "--color=always",
+        "log",
+        "--date=short",
+        "--abbrev-commit",
+        "--color=always",
         "--format=%C(yellow)%h %C(green)%ad %C(reset)%s",
-        "-n", &n,
+        "-n",
+        &n,
     ];
     if let Some(base) = base_sha {
         base_arg = format!("^{}", base);
@@ -201,14 +239,25 @@ fn get_logs(path: &str, max: usize, base_sha: Option<&str>) -> Vec<String> {
         .current_dir(path)
         .args(&args)
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(String::from).collect())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(String::from)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 fn get_base_log_line(path: &str, sha: &str) -> Option<String> {
     Command::new("git")
         .current_dir(path)
-        .args(["show", "-s", "--format=%C(yellow)%h %C(green)%ad %C(reset)%s", "--date=short", sha])
+        .args([
+            "show",
+            "-s",
+            "--format=%C(yellow)%h %C(green)%ad %C(reset)%s",
+            "--date=short",
+            sha,
+        ])
         .output()
         .ok()
         .and_then(|o| {
@@ -233,9 +282,15 @@ fn print_tree_node(
 
     let mut label = format!(
         "{}[{}]{} {}{}{}  {}({}){} ",
-        YELLOW, node.id, RESET,
-        CYAN_BOLD, wt.display_branch(), RESET,
-        DIM, rel_path, RESET
+        YELLOW,
+        node.id,
+        RESET,
+        CYAN_BOLD,
+        wt.display_branch(),
+        RESET,
+        DIM,
+        rel_path,
+        RESET
     );
     if is_root {
         label.push_str(&format!("{}(Main){}", DIM, RESET));
@@ -255,8 +310,7 @@ fn print_tree_node(
         child_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
     }
 
-    let node_logs = &logs[idx];
-    for log_line in node_logs {
+    for log_line in &logs[idx] {
         println!("{}{}├── {}{}", child_prefix, WHITE, RESET, log_line);
     }
 
@@ -266,8 +320,7 @@ fn print_tree_node(
             let connector = if has_children { "├──" } else { "└──" };
             println!(
                 "{}{}{}{}↓{} {}  {}(branch point){}",
-                child_prefix, WHITE, connector, RESET, RESET,
-                base_line, DIM, RESET
+                child_prefix, WHITE, connector, RESET, RESET, base_line, DIM, RESET
             );
         }
     }
@@ -291,7 +344,11 @@ pub fn cmd_tree(max_commits: usize, show_all: bool, config: &GwtpConfig) {
         .filter(|(_, wt)| {
             show_all
                 || wt.is_main
-                || !is_worktree_hidden(wt, &config.hidden_wt_prefixes, &config.hidden_branch_prefixes)
+                || !is_worktree_hidden(
+                    wt,
+                    &config.hidden_wt_prefixes,
+                    &config.hidden_branch_prefixes,
+                )
         })
         .map(|(i, _)| i)
         .collect();
@@ -300,7 +357,6 @@ pub fn cmd_tree(max_commits: usize, show_all: bool, config: &GwtpConfig) {
         return;
     }
 
-    // Build tree nodes
     let mut nodes: Vec<TreeNode> = wt_indices
         .iter()
         .enumerate()
@@ -316,12 +372,10 @@ pub fn cmd_tree(max_commits: usize, show_all: bool, config: &GwtpConfig) {
 
     let root_path = wts[wt_indices[0]].path.clone();
 
-    // Assign parents by path containment
     for i in 1..nodes.len() {
         let child_parts: Vec<&str> = wts[nodes[i].wt_idx].path.split('/').collect();
         let mut best_parent = 0usize;
         let mut best_match: i64 = -1;
-
         for j in 0..i {
             let parent_name = wts[nodes[j].wt_idx].name();
             if let Some(pos) = child_parts[..child_parts.len().saturating_sub(1)]
@@ -334,30 +388,32 @@ pub fn cmd_tree(max_commits: usize, show_all: bool, config: &GwtpConfig) {
                 }
             }
         }
-
         nodes[i].parent_idx = Some(best_parent);
 
-        // Compute merge-base
         let parent_sha = wts[nodes[best_parent].wt_idx].hash.clone();
         let child_sha = wts[nodes[i].wt_idx].hash.clone();
         let child_path = wts[nodes[i].wt_idx].path.clone();
-        if let Ok(base) = crate::git::git_in(Some(&child_path), &["merge-base", &parent_sha, &child_sha]) {
+        if let Ok(base) = crate::git::git_in(
+            Some(&child_path),
+            &["merge-base", &parent_sha, &child_sha],
+        ) {
             nodes[i].base_sha = Some(base);
         }
     }
 
-    // Populate children lists
     for i in 1..nodes.len() {
         if let Some(p) = nodes[i].parent_idx {
             nodes[p].children.push(i);
         }
     }
 
-    // Gather logs
-    let logs: Vec<Vec<String>> = nodes.iter().map(|node| {
-        let wt = &wts[node.wt_idx];
-        get_logs(&wt.path, max_commits, node.base_sha.as_deref())
-    }).collect();
+    let logs: Vec<Vec<String>> = nodes
+        .iter()
+        .map(|node| {
+            let wt = &wts[node.wt_idx];
+            get_logs(&wt.path, max_commits, node.base_sha.as_deref())
+        })
+        .collect();
 
     print_tree_node(0, &nodes, &wts, &logs, &root_path, "", true);
 }
