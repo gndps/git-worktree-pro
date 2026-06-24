@@ -1,3 +1,4 @@
+use crate::config::GwtpConfig;
 use crate::worktree::{get_worktree_path, sorted_worktrees};
 use std::process::Command;
 
@@ -26,11 +27,11 @@ pub fn cmd_diff(p_idx: usize, c_idx: usize) {
         .ok();
 }
 
-/// wdiffc: Open diff between two worktrees in Windsurf
-pub fn cmd_diff_code(p_idx: usize, c_idx: usize) {
+/// wdiffc: Open both worktrees side by side in the configured editor
+pub fn cmd_diff_code(p_idx: usize, c_idx: usize, config: &GwtpConfig) {
     let (p_path, _, c_path, _) = get_indexed_pair(p_idx, c_idx);
-    Command::new("windsurf")
-        .args(["--diff", &p_path, &c_path])
+    Command::new(&config.editor)
+        .args([&p_path, &c_path])
         .status()
         .ok();
 }

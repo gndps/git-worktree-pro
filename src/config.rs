@@ -13,6 +13,8 @@ pub struct GwtpConfig {
     pub hidden_branch_prefixes: Vec<String>,
     #[serde(default)]
     pub sync_patterns: Vec<String>,
+    #[serde(default = "default_editor")]
+    pub editor: String,
 }
 
 fn default_hidden_wt() -> Vec<String> {
@@ -23,12 +25,17 @@ fn default_hidden_br() -> Vec<String> {
     vec!["_".into()]
 }
 
+fn default_editor() -> String {
+    "vim".to_string()
+}
+
 impl Default for GwtpConfig {
     fn default() -> Self {
         Self {
             hidden_wt_prefixes: default_hidden_wt(),
             hidden_branch_prefixes: default_hidden_br(),
             sync_patterns: Vec::new(),
+            editor: default_editor(),
         }
     }
 }
@@ -111,15 +118,16 @@ fn remove_managed_block(content: &str) -> String {
 
 pub fn cmd_config(args: &[String], common_git_dir: &str) {
     if args.is_empty() {
-        eprintln!("Usage: gwtp config <add|rm|list|set-hidden-wt|set-hidden-br> [args...]");
+        eprintln!("Usage: gwtp config <add|rm|list|set-hidden-wt|set-hidden-br|set-editor|edit> [args...]");
         return;
     }
     let mut config = load_config(common_git_dir);
     match args[0].as_str() {
         "list" => {
-            println!("hidden_wt_prefixes: {:?}", config.hidden_wt_prefixes);
-            println!("hidden_branch_prefixes: {:?}", config.hidden_branch_prefixes);
-            println!("sync_patterns: {:?}", config.sync_patterns);
+            println!("editor:                {}", config.editor);
+            println!("hidden_wt_prefixes:    {:?}", config.hidden_wt_prefixes);
+            println!("hidden_branch_prefixes:{:?}", config.hidden_branch_prefixes);
+            println!("sync_patterns:         {:?}", config.sync_patterns);
         }
         "add" => {
             if args.len() < 2 {
@@ -167,6 +175,34 @@ pub fn cmd_config(args: &[String], common_git_dir: &str) {
                 Ok(_) => eprintln!("✅ Updated hidden branch prefixes: {:?}", config.hidden_branch_prefixes),
                 Err(e) => eprintln!("❌ Error: {}", e),
             }
+        }
+        "set-editor" => {
+            if args.len() < 2 {
+                eprintln!("Usage: gwtp config set-editor <command>");
+                return;
+            }
+            config.editor = args[1].clone();
+            match save_config(common_git_dir, &config) {
+                Ok(_) => eprintln!("✅ Editor set to: {}", config.editor),
+                Err(e) => eprintln!("❌ Error: {}", e),
+            }
+        }
+        "edit" => {
+            let path = config_path(common_git_dir);
+            if !path.exists() {
+                // Create default config file so there is something to edit
+                if let Err(e) = save_config(common_git_dir, &config) {
+                    eprintln!("❌ Could not create config file: {}", e);
+                    return;
+                }
+            }
+            std::process::Command::new(&config.editor)
+                .arg(path.to_string_lossy().as_ref())
+                .status()
+                .unwrap_or_else(|e| {
+                    eprintln!("❌ Failed to open editor '{}': {}", config.editor, e);
+                    std::process::exit(1);
+                });
         }
         _ => eprintln!("Unknown config command: {}", args[0]),
     }

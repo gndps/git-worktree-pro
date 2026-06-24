@@ -34,8 +34,8 @@ pub fn cmd_cd(target: &str) {
     println!("cd '{}'", final_dest);
 }
 
-/// wwi: Open Windsurf editor at worktree, preserving relative path
-pub fn cmd_open(target: &str) {
+/// wwi: Open editor at worktree, preserving relative path
+pub fn cmd_open(target: &str, config: &GwtpConfig) {
     let wts = sorted_worktrees();
     let target_path = get_worktree_path(target, &wts).unwrap_or_else(|| {
         eprintln!("❌ No worktree found for '{}'.", target);
@@ -59,11 +59,11 @@ pub fn cmd_open(target: &str) {
         &target_path
     };
 
-    eprintln!("🏄 Opening Windsurf at: {}", open_path);
-    Command::new("windsurf").arg(open_path).spawn().ok();
+    eprintln!("Opening {} at: {}", config.editor, open_path);
+    Command::new(&config.editor).arg(open_path).status().ok();
 }
 
-/// wwif: fzf picker to select worktree, then open in Windsurf
+/// wwif: fzf picker to select worktree, then open in editor
 pub fn cmd_open_pick(show_all: bool, config: &GwtpConfig) {
     use crate::worktree::{get_wt_note, is_worktree_hidden};
     use crate::list::{YELLOW, CYAN_BOLD, DIM, SKY_BLUE, GRAY, RESET};
@@ -124,8 +124,8 @@ pub fn cmd_open_pick(show_all: bool, config: &GwtpConfig) {
     if let Ok(idx) = idx_str.parse::<usize>() {
         if idx >= 1 && idx <= wts.len() {
             let wt_path = &wts[idx - 1].path;
-            eprintln!("🏄 Opening Windsurf at: {}", wt_path);
-            Command::new("windsurf").arg(wt_path).spawn().ok();
+            eprintln!("Opening {} at: {}", config.editor, wt_path);
+            Command::new(&config.editor).arg(wt_path).status().ok();
         }
     }
 }

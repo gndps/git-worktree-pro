@@ -85,7 +85,7 @@ enum Commands {
     Cd {
         target: String,
     },
-    /// Open worktree in Windsurf [wwi]
+    /// Open worktree in editor [wwi]
     Open {
         target: String,
     },
@@ -116,7 +116,7 @@ enum Commands {
         parent_index: usize,
         child_index: usize,
     },
-    /// Open diff between two worktrees in Windsurf [wdiffc]
+    /// Open two worktrees in editor [wdiffc]
     DiffCode {
         parent_index: usize,
         child_index: usize,
@@ -141,11 +141,20 @@ enum Commands {
         /// Slug to set (omit to get current slug)
         name: Option<String>,
     },
-    /// Show prompt info
+    /// Show prompt info for shell / oh-my-posh integration
     Prompt {
-        /// Format: small (default), medium, or json
+        /// Output format: small (default), medium (banner), json
         #[arg(default_value = "small")]
         format: String,
+        /// Prefix output with 🌲 tree emoji
+        #[arg(long)]
+        emoji: bool,
+        /// Use toilet rendering; optionally specify font name (default: future)
+        #[arg(long, value_name = "FONT", num_args = 0..=1, default_missing_value = "future")]
+        toilet: Option<String>,
+        /// Use figlet rendering; optionally specify font name (default: standard)
+        #[arg(long, value_name = "FONT", num_args = 0..=1, default_missing_value = "")]
+        figlet: Option<String>,
     },
     /// Show compact git status [gsd]
     Status,
@@ -210,7 +219,7 @@ fn main() {
         }
         Commands::Open { target } => {
             require_git();
-            navigate::cmd_open(&target);
+            navigate::cmd_open(&target, &cfg);
         }
         Commands::OpenPick { all } => {
             require_git();
@@ -234,7 +243,7 @@ fn main() {
         }
         Commands::DiffCode { parent_index, child_index } => {
             require_git();
-            diff::cmd_diff_code(parent_index, child_index);
+            diff::cmd_diff_code(parent_index, child_index, &cfg);
         }
         Commands::DiffList { parent_index, child_index } => {
             require_git();
@@ -255,11 +264,14 @@ fn main() {
         Commands::Slug { name } => {
             slug::cmd_slug(name);
         }
-        Commands::Prompt { format } => match format.as_str() {
-            "medium" => prompt::cmd_prompt_medium(),
-            "json" => prompt::cmd_prompt_json(),
-            _ => prompt::cmd_prompt_small(),
-        },
+        Commands::Prompt { format, emoji, toilet, figlet } => {
+            let opts = prompt::PromptOpts { emoji, toilet, figlet };
+            match format.as_str() {
+                "medium" => prompt::cmd_prompt_medium(&opts),
+                "json" => prompt::cmd_prompt_json(),
+                _ => prompt::cmd_prompt_small(emoji),
+            }
+        }
         Commands::Status => {
             status::cmd_status();
         }
