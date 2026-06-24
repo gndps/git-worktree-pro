@@ -106,7 +106,7 @@ checksum = "4742a071cd9694fc86f9fa1a08fa3e53d40cc899d7ee532295da2d085639fbc5"
 
 [[package]]
 name = "git-worktree-pro"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "clap",
  "figlet-rs",
