@@ -15,6 +15,7 @@ pub const GRAY: &str = "\x1b[38;5;245m";
 pub const RESET: &str = "\x1b[0m";
 pub const WHITE: &str = "\x1b[0;37m";
 pub const RED: &str = "\x1b[31m";
+pub const GREEN: &str = "\x1b[32m";
 
 pub fn cmd_list(show_all: bool, show_status: bool, config: &GwtpConfig) {
     let wts = sorted_worktrees();

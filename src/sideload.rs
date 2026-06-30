@@ -548,13 +548,47 @@ enum Entry {
     Leaf,
 }
 
-/// One distinct content version of a path: its hash, the (1-based) worktree
-/// indices that hold it, and the earliest mtime seen for that content.
-type FileVariant = (String, Vec<usize>, Option<i64>);
+/// One distinct content version of a path: its hash and the earliest mtime
+/// seen for that content (across whichever worktrees hold it).
+type FileVariant = (String, Option<i64>);
 
 /// One discovered (rel path, hash, mtime, worktree index) reading, before
 /// it's merged into `FileVariant`s.
 type FileReading = (String, String, Option<i64>, usize);
+
+/// idx -> (hash, mtime) for every worktree that has *some* version of a path.
+type PathVersions = BTreeMap<usize, (String, Option<i64>)>;
+
+/// Builds the `[1,2,3(red),4(yellow),5(green)]`-style index list for one
+/// (path, hash) entry in `list-all`: every worktree index 1..=total appears
+/// exactly once, colored by that worktree's relationship to this version —
+///   - default: has this exact content
+///   - red: doesn't have this path at all
+///   - yellow: has this path, but an older (or same-age) different version
+///   - green: has this path, but a newer different version
+fn colorize_indices(
+    total_worktrees: usize,
+    this_hash: &str,
+    this_mtime: Option<i64>,
+    versions: &PathVersions,
+) -> String {
+    (1..=total_worktrees)
+        .map(|idx| match versions.get(&idx) {
+            None => format!("{}{}{}", crate::list::RED, idx, crate::list::RESET),
+            Some((hash, _)) if hash == this_hash => idx.to_string(),
+            Some((_, other_mtime)) => {
+                let is_newer = match (*other_mtime, this_mtime) {
+                    (Some(a), Some(b)) => a > b,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                let color = if is_newer { crate::list::GREEN } else { crate::list::YELLOW };
+                format!("{}{}{}", color, idx, crate::list::RESET)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
 fn insert_leaf(map: &mut BTreeMap<String, Entry>, components: &[&str], leaf_label: &str) {
     if components.len() <= 1 {
@@ -651,14 +685,21 @@ pub fn cmd_list_all(common_git_dir: &str) {
         })
         .collect();
 
-    // rel path -> [(hash, [worktree indices], earliest mtime seen for this content)]
+    // rel path -> [(hash, earliest mtime seen for this content)]
     let mut file_variants: BTreeMap<String, Vec<FileVariant>> = BTreeMap::new();
+    // rel path -> idx -> (hash, mtime), used to color each entry's index list
+    // against every *other* worktree's version (or absence) of that path.
+    let mut path_versions: BTreeMap<String, PathVersions> = BTreeMap::new();
 
     for (rel, hash, mtime, idx) in per_worktree.into_iter().flatten() {
+        path_versions
+            .entry(rel.clone())
+            .or_default()
+            .insert(idx, (hash.clone(), mtime));
+
         let variants = file_variants.entry(rel).or_default();
-        match variants.iter_mut().find(|(h, _, _)| *h == hash) {
-            Some((_, indices, earliest)) => {
-                indices.push(idx);
+        match variants.iter_mut().find(|(h, _)| *h == hash) {
+            Some((_, earliest)) => {
                 // Identical content should carry the same (preserved) mtime;
                 // if copies predate mtime preservation, the earliest mtime
                 // seen is the closest approximation of the true edit time.
@@ -667,7 +708,7 @@ pub fn cmd_list_all(common_git_dir: &str) {
                     (a, b) => a.or(b),
                 };
             }
-            None => variants.push((hash, vec![idx], mtime)),
+            None => variants.push((hash, mtime)),
         }
     }
 
@@ -681,12 +722,9 @@ pub fn cmd_list_all(common_git_dir: &str) {
     for (rel, variants) in &file_variants {
         let components: Vec<&str> = rel.split('/').collect();
         let filename = components.last().copied().unwrap_or(rel.as_str());
-        for (hash, indices, mtime) in variants {
-            let indices_str = indices
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
+        let versions = &path_versions[rel];
+        for (hash, mtime) in variants {
+            let indices_str = colorize_indices(wts.len(), hash, *mtime, versions);
             let date_str = mtime
                 .map(crate::date::format_datetime)
                 .unwrap_or_else(|| "unknown".to_string());

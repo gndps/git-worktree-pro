@@ -75,6 +75,20 @@ directly inside it.
 | `gwtp sideload list` (`-l` / `l` / `--list`) | Tree of sideloaded files in the current worktree, with each file's last-modified date |
 | `gwtp sideload list-all` (`-la` / `la` / `--list-all`) | Global tree of sideloaded files across every worktree — each unique path shows a 6-char content hash, the date that content was last modified, and the worktree indices holding that version, so you can spot divergence before basing/copying files between worktrees |
 
+`list-all` lists *every* worktree index for every (path, hash) entry — not
+just the ones matching that version — colored by how each worktree relates
+to it:
+
+- plain: that worktree has this exact content
+- red: that worktree doesn't have this path at all
+- yellow: that worktree has a different, *older* version of this path
+- green: that worktree has a different, *newer* version of this path
+
+e.g. `local.json (de5b1c, 2026-06-20 10:00) [1,2,3,4,5]` with worktree 3
+in red and 4 in green means worktrees 1, 2, and 5 have this exact version,
+worktree 3 doesn't have the file at all, and worktree 4 has a newer edit of
+it — useful for spotting which worktree to "base" a sync from.
+
 `gwtp sideload` always copies files preserving the source's modification
 time (like `cp -p`), instead of stamping the copy time — so the dates shown
 above reflect when a file's *content* last changed, not when it was last
