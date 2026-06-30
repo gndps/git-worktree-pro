@@ -119,45 +119,38 @@ fn remove_managed_block(content: &str) -> String {
     result.trim_end().to_string() + "\n"
 }
 
-pub fn cmd_config(args: &[String], common_git_dir: &str) {
-    if args.is_empty() {
-        eprintln!("Usage: gwtp config <list|set-hidden-wt|set-hidden-br|set-editor|edit> [args...]");
-        eprintln!("Note: sideload pattern management moved to `gwtp sideload add|rm|list-patterns|edit`.");
-        return;
-    }
+pub fn cmd_config(command: crate::ConfigCommands, common_git_dir: &str) {
+    use crate::ConfigCommands;
+
     let mut config = load_config(common_git_dir);
-    match args[0].as_str() {
-        "list" => {
+    match command {
+        ConfigCommands::List => {
             println!("editor:                {}", config.editor);
             println!("hidden_wt_prefixes:    {:?}", config.hidden_wt_prefixes);
             println!("hidden_branch_prefixes:{:?}", config.hidden_branch_prefixes);
         }
-        "set-hidden-wt" => {
-            config.hidden_wt_prefixes = args[1..].iter().map(|s| s.clone()).collect();
+        ConfigCommands::SetHiddenWt { prefixes } => {
+            config.hidden_wt_prefixes = prefixes;
             match save_config(common_git_dir, &config) {
                 Ok(_) => eprintln!("✅ Updated hidden WT prefixes: {:?}", config.hidden_wt_prefixes),
                 Err(e) => eprintln!("❌ Error: {}", e),
             }
         }
-        "set-hidden-br" => {
-            config.hidden_branch_prefixes = args[1..].iter().map(|s| s.clone()).collect();
+        ConfigCommands::SetHiddenBr { prefixes } => {
+            config.hidden_branch_prefixes = prefixes;
             match save_config(common_git_dir, &config) {
                 Ok(_) => eprintln!("✅ Updated hidden branch prefixes: {:?}", config.hidden_branch_prefixes),
                 Err(e) => eprintln!("❌ Error: {}", e),
             }
         }
-        "set-editor" => {
-            if args.len() < 2 {
-                eprintln!("Usage: gwtp config set-editor <command>");
-                return;
-            }
-            config.editor = args[1].clone();
+        ConfigCommands::SetEditor { editor } => {
+            config.editor = editor;
             match save_config(common_git_dir, &config) {
                 Ok(_) => eprintln!("✅ Editor set to: {}", config.editor),
                 Err(e) => eprintln!("❌ Error: {}", e),
             }
         }
-        "edit" => {
+        ConfigCommands::Edit => {
             let path = config_path(common_git_dir);
             if !path.exists() {
                 // Create default config file so there is something to edit
@@ -174,9 +167,11 @@ pub fn cmd_config(args: &[String], common_git_dir: &str) {
                     std::process::exit(1);
                 });
         }
-        "add" | "rm" => {
-            eprintln!("⚠️  Sideload patterns moved: use `gwtp sideload {} <pattern>` instead.", args[0]);
+        ConfigCommands::Add { .. } => {
+            eprintln!("⚠️  Sideload patterns moved: use `gwtp sideload add <pattern>` instead.");
         }
-        _ => eprintln!("Unknown config command: {}", args[0]),
+        ConfigCommands::Rm { .. } => {
+            eprintln!("⚠️  Sideload patterns moved: use `gwtp sideload rm <pattern>` instead.");
+        }
     }
 }

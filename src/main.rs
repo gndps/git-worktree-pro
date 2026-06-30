@@ -63,7 +63,7 @@ enum Commands {
     /// Manage sideloaded files: patterns, broadcasting, and inspection
     Sideload {
         #[command(subcommand)]
-        command: Option<SideloadCommands>,
+        command: SideloadCommands,
     },
     /// Navigate to a worktree (prints `cd '<path>'` for eval)
     Cd {
@@ -144,8 +144,36 @@ enum Commands {
     Status,
     /// Manage gwtp configuration
     Config {
-        /// Subcommand: list, set-hidden-wt, set-hidden-br, set-editor, edit
-        args: Vec<String>,
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Show current config
+    List,
+    /// Set hidden worktree directory-name prefixes
+    SetHiddenWt {
+        prefixes: Vec<String>,
+    },
+    /// Set hidden branch-name prefixes
+    SetHiddenBr {
+        prefixes: Vec<String>,
+    },
+    /// Set the editor command used by `gwtp config edit` / `gwtp sideload edit`
+    SetEditor {
+        editor: String,
+    },
+    /// Open gwtp.json in the configured editor
+    Edit,
+    #[command(hide = true)]
+    Add {
+        pattern: Vec<String>,
+    },
+    #[command(hide = true)]
+    Rm {
+        pattern: Vec<String>,
     },
 }
 
@@ -233,26 +261,22 @@ fn main() {
         Commands::Sideload { command } => {
             require_git();
             match command {
-                Some(SideloadCommands::Init { all }) => sideload::cmd_init(all, &cfg, &common_git_dir),
-                Some(SideloadCommands::Base { from, paths }) => {
+                SideloadCommands::Init { all } => sideload::cmd_init(all, &cfg, &common_git_dir),
+                SideloadCommands::Base { from, paths } => {
                     sideload::cmd_base(from.as_deref(), &paths, &cfg, &common_git_dir)
                 }
-                Some(SideloadCommands::CpFrom { target }) => sideload::cmd_cp_from(&target, &common_git_dir),
-                Some(SideloadCommands::CpTo { target }) => sideload::cmd_cp_to(&target, &common_git_dir),
-                Some(SideloadCommands::Add { pattern }) => {
+                SideloadCommands::CpFrom { target } => sideload::cmd_cp_from(&target, &common_git_dir),
+                SideloadCommands::CpTo { target } => sideload::cmd_cp_to(&target, &common_git_dir),
+                SideloadCommands::Add { pattern } => {
                     sideload::cmd_add_pattern(&common_git_dir, &pattern.join(" "))
                 }
-                Some(SideloadCommands::Rm { pattern }) => {
+                SideloadCommands::Rm { pattern } => {
                     sideload::cmd_rm_pattern(&common_git_dir, &pattern.join(" "))
                 }
-                Some(SideloadCommands::ListPatterns) => sideload::cmd_list_patterns(&common_git_dir),
-                Some(SideloadCommands::Edit) => sideload::cmd_edit(&common_git_dir, &cfg),
-                Some(SideloadCommands::List) => sideload::cmd_list(&common_git_dir),
-                Some(SideloadCommands::ListAll) => sideload::cmd_list_all(&common_git_dir),
-                None => {
-                    eprintln!("Usage: gwtp sideload <init|base|cp-from|cp-to|add|rm|list-patterns|edit|list|list-all>");
-                    std::process::exit(1);
-                }
+                SideloadCommands::ListPatterns => sideload::cmd_list_patterns(&common_git_dir),
+                SideloadCommands::Edit => sideload::cmd_edit(&common_git_dir, &cfg),
+                SideloadCommands::List => sideload::cmd_list(&common_git_dir),
+                SideloadCommands::ListAll => sideload::cmd_list_all(&common_git_dir),
             }
         }
         Commands::Cd { target } => {
@@ -317,12 +341,12 @@ fn main() {
         Commands::Status => {
             status::cmd_status();
         }
-        Commands::Config { args } => {
+        Commands::Config { command } => {
             if common_git_dir.is_empty() {
                 eprintln!("❌ Not in a git repository.");
                 std::process::exit(1);
             }
-            config::cmd_config(&args, &common_git_dir);
+            config::cmd_config(command, &common_git_dir);
         }
     }
 }
