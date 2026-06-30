@@ -238,17 +238,6 @@ pub fn get_wt_status(path: &str) -> String {
 pub fn get_wt_config_mtime(wt_path: &str) -> u64 {
     let mut latest: u64 = 0;
     collect_env_mtimes(std::path::Path::new(wt_path), &mut latest, 0);
-    let config = std::path::Path::new(wt_path).join(".worktree.config");
-    if config.exists() {
-        if let Ok(m) = std::fs::metadata(&config) {
-            if let Ok(t) = m.modified() {
-                let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-                if secs > latest {
-                    latest = secs;
-                }
-            }
-        }
-    }
     latest
 }
 

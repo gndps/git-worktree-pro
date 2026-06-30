@@ -53,58 +53,16 @@ pub fn patterns_file_path(common_git_dir: &str) -> PathBuf {
     Path::new(common_git_dir).join("sideload_patterns.json")
 }
 
+/// The single source of truth for what's sideloaded: `sideload_patterns.json`
+/// alone. No other file is consulted, and nothing is migrated from older
+/// formats — if you had patterns somewhere else, re-add them with
+/// `gwtp sideload add`.
 pub fn load_patterns(common_git_dir: &str) -> SideloadPatterns {
-    migrate_legacy_patterns(common_git_dir);
     let path = patterns_file_path(common_git_dir);
     fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
-}
-
-/// Migrates older pattern storage formats, newest-first: the standalone
-/// flat gitignore-style file used by v0.2.0–v0.2.4, then `sync_patterns`
-/// inside `gwtp.json` from before that. Both only ever synced to
-/// `.git/info/exclude`, so they become `sideload_and_ignore` patterns.
-fn migrate_legacy_patterns(common_git_dir: &str) {
-    let new_path = patterns_file_path(common_git_dir);
-    if new_path.exists() {
-        return;
-    }
-
-    let old_flat_path = Path::new(common_git_dir).join("sideload_patterns");
-    if let Ok(content) = fs::read_to_string(&old_flat_path) {
-        let lines: Vec<String> = content
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .map(String::from)
-            .collect();
-        eprintln!(
-            "🔄 Migrating {} pattern(s) from {} to {}",
-            lines.len(),
-            old_flat_path.display(),
-            new_path.display()
-        );
-        let patterns = SideloadPatterns { sideload_and_ignore: lines, sideload_only: Vec::new() };
-        write_patterns_file(&new_path, &patterns);
-        let _ = fs::remove_file(&old_flat_path);
-        let _ = crate::config::sync_managed_block(common_git_dir, &patterns.sideload_and_ignore);
-        return;
-    }
-
-    let legacy = crate::config::load_config(common_git_dir).legacy_sync_patterns;
-    if legacy.is_empty() {
-        return;
-    }
-    eprintln!(
-        "🔄 Migrating {} legacy sync_patterns from gwtp.json to {}",
-        legacy.len(),
-        new_path.display()
-    );
-    let patterns = SideloadPatterns { sideload_and_ignore: legacy, sideload_only: Vec::new() };
-    write_patterns_file(&new_path, &patterns);
-    let _ = crate::config::sync_managed_block(common_git_dir, &patterns.sideload_and_ignore);
 }
 
 fn write_patterns_file(path: &Path, patterns: &SideloadPatterns) {
@@ -223,18 +181,14 @@ pub fn cmd_exclude(common_git_dir: &str) {
 // with a single `git ls-files` call per worktree so already-tracked files
 // aren't pulled in by an overly broad pattern.
 
-/// Builds an in-memory gitignore-style matcher from both pattern lists
-/// (`sideload_and_ignore` + `sideload_only` — both are sideloaded, they only
-/// differ in whether they're mirrored to `.git/info/exclude`) plus the
-/// legacy `.worktree.config` file.
+/// Builds an in-memory gitignore-style matcher from `sideload_patterns.json`
+/// alone — both pattern lists (`sideload_and_ignore` + `sideload_only`) are
+/// sideloaded the same way, they only differ in whether they're mirrored to
+/// `.git/info/exclude`.
 fn build_pattern_matcher(root: &str, common_git_dir: &str) -> Gitignore {
     let mut builder = GitignoreBuilder::new(root);
     for p in load_patterns(common_git_dir).all() {
         let _ = builder.add_line(None, p);
-    }
-    let wt_config = Path::new(root).join(".worktree.config");
-    if wt_config.exists() {
-        let _ = builder.add(&wt_config);
     }
     builder.build().unwrap_or_else(|_| Gitignore::empty())
 }
@@ -275,9 +229,9 @@ fn walk_candidate_files(root: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// All files (relative paths) that sideload patterns + `.env*` + the legacy
-/// `.worktree.config` manage for `root`. Shared by the copy commands and the
-/// `list`/`list-all` views so they always agree on what's "sideloaded".
+/// All files (relative paths) that `sideload_patterns.json` + `.env*` manage
+/// for `root`. Shared by the copy commands and the `list`/`list-all` views
+/// so they always agree on what's "sideloaded".
 pub fn gather_sideload_files(root: &str, common_git_dir: &str) -> Vec<String> {
     let matcher = build_pattern_matcher(root, common_git_dir);
     let tracked = tracked_files(root);

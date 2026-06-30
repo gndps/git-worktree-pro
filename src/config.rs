@@ -13,11 +13,6 @@ pub struct GwtpConfig {
     pub hidden_branch_prefixes: Vec<String>,
     #[serde(default = "default_editor")]
     pub editor: String,
-    /// Legacy field: sideload patterns used to live here. Read-only — kept so
-    /// existing `gwtp.json` files can be migrated to the standalone
-    /// `sideload_patterns` file. Never written back out.
-    #[serde(default, rename = "sync_patterns", skip_serializing)]
-    pub legacy_sync_patterns: Vec<String>,
 }
 
 fn default_hidden_wt() -> Vec<String> {
@@ -38,7 +33,6 @@ impl Default for GwtpConfig {
             hidden_wt_prefixes: default_hidden_wt(),
             hidden_branch_prefixes: default_hidden_br(),
             editor: default_editor(),
-            legacy_sync_patterns: Vec::new(),
         }
     }
 }
