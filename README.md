@@ -55,8 +55,15 @@ comments.
 | `gwtp sideload rm <pattern>` | Remove a pattern |
 | `gwtp sideload list-patterns` (alias `patterns`) | Show configured patterns |
 | `gwtp sideload edit` | Open `sideload_patterns` in your configured editor |
-| `gwtp sideload list` (`-l` / `l` / `--list`) | Tree of sideloaded files in the current worktree |
-| `gwtp sideload list-all` (`-la` / `la` / `--list-all`) | Global tree of sideloaded files across every worktree — each unique path shows a 6-char content hash and the worktree indices holding that version, so you can spot divergence before basing/copying files between worktrees |
+| `gwtp sideload list` (`-l` / `l` / `--list`) | Tree of sideloaded files in the current worktree, with each file's last-modified date |
+| `gwtp sideload list-all` (`-la` / `la` / `--list-all`) | Global tree of sideloaded files across every worktree — each unique path shows a 6-char content hash, the date that content was last modified, and the worktree indices holding that version, so you can spot divergence before basing/copying files between worktrees |
+
+`gwtp sideload` always copies files preserving the source's modification
+time (like `cp -p`), instead of stamping the copy time — so the dates shown
+above reflect when a file's *content* last changed, not when it was last
+copied between worktrees. This only holds for files copied by `gwtp`; a
+file's mtime from before you started using `gwtp sideload` (or copied by
+some other tool) reflects whatever it was set to then.
 
 ### Prompt integration
 

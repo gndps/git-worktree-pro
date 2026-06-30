@@ -287,48 +287,5 @@ pub fn get_wt_config_date(wt_path: &str) -> Option<String> {
     if mtime == 0 {
         return None;
     }
-    use std::time::{Duration, UNIX_EPOCH};
-    let t = UNIX_EPOCH + Duration::from_secs(mtime);
-    let datetime: chrono_simple::Date = chrono_simple::unix_to_date(mtime);
-    Some(format!("{:04}-{:02}-{:02}", datetime.year, datetime.month, datetime.day))
-}
-
-pub mod chrono_simple {
-    pub struct Date {
-        pub year: i32,
-        pub month: u8,
-        pub day: u8,
-    }
-
-    pub fn unix_to_date(secs: u64) -> Date {
-        let days = secs / 86400;
-        let mut y = 1970i32;
-        let mut d = days as i64;
-        loop {
-            let days_in_year = if is_leap(y) { 366 } else { 365 };
-            if d < days_in_year {
-                break;
-            }
-            d -= days_in_year;
-            y += 1;
-        }
-        let months = if is_leap(y) {
-            [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-        } else {
-            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-        };
-        let mut m = 0u8;
-        for (i, &days_in_month) in months.iter().enumerate() {
-            if d < days_in_month {
-                m = (i + 1) as u8;
-                break;
-            }
-            d -= days_in_month;
-        }
-        Date { year: y, month: m, day: (d + 1) as u8 }
-    }
-
-    fn is_leap(y: i32) -> bool {
-        (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
-    }
+    crate::date::format_date(mtime as i64)
 }

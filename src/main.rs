@@ -1,4 +1,5 @@
 mod config;
+mod date;
 mod diff;
 mod git;
 mod list;

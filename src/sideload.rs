@@ -207,7 +207,7 @@ pub fn sideload_worktree_files(source: &str, target: &str, force: bool, common_g
             let _ = fs::create_dir_all(parent);
         }
         if !dst.exists() || force {
-            match fs::copy(&src, &dst) {
+            match copy_preserving_mtime(&src, &dst) {
                 Ok(_) => {
                     copied += 1;
                     eprintln!("   ✅ Copied: {}", rel);
@@ -239,7 +239,7 @@ pub fn copy_paths_to(source: &str, target: &str, abs_paths: &[PathBuf]) {
             if let Some(parent) = dst.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            match fs::copy(abs, &dst) {
+            match copy_preserving_mtime(abs, &dst) {
                 Ok(_) => eprintln!("   ✅ Copied: {}", rel.display()),
                 Err(e) => eprintln!("   ❌ Failed {}: {}", rel.display(), e),
             }
@@ -256,9 +256,26 @@ fn copy_dir_recursive(src: &Path, dst: &Path) {
             let _ = fs::create_dir_all(&dest);
             copy_dir_recursive(&path, &dest);
         } else {
-            let _ = fs::copy(&path, &dest);
+            let _ = copy_preserving_mtime(&path, &dest);
         }
     }
+}
+
+/// Copies a file and carries over the source's mtime. Plain `fs::copy` stamps
+/// the destination with the copy time, which then masquerades as the file's
+/// "last edited" time — this is what keeps that timestamp meaningful across
+/// repeated `gwtp sideload` copies between worktrees.
+fn copy_preserving_mtime(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::copy(src, dst)?;
+    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(src)?);
+    filetime::set_file_mtime(dst, mtime)?;
+    Ok(())
+}
+
+fn file_mtime_secs(path: &Path) -> Option<i64> {
+    fs::metadata(path)
+        .ok()
+        .map(|m| filetime::FileTime::from_last_modification_time(&m).unix_seconds())
 }
 
 // ── Commands moved here from ops.rs (sideload-specific) ─────────────────────
@@ -451,6 +468,10 @@ enum Entry {
     Leaf,
 }
 
+/// One distinct content version of a path: its hash, the (1-based) worktree
+/// indices that hold it, and the earliest mtime seen for that content.
+type FileVariant = (String, Vec<usize>, Option<i64>);
+
 fn insert_leaf(map: &mut BTreeMap<String, Entry>, components: &[&str], leaf_label: &str) {
     if components.len() <= 1 {
         map.insert(leaf_label.to_string(), Entry::Leaf);
@@ -504,7 +525,12 @@ pub fn cmd_list(common_git_dir: &str) {
     for rel in &files {
         let components: Vec<&str> = rel.split('/').collect();
         let filename = components.last().copied().unwrap_or(rel.as_str());
-        insert_leaf(&mut root_map, &components, filename);
+        let abs = Path::new(&root).join(rel);
+        let label = match file_mtime_secs(&abs) {
+            Some(secs) => format!("{} ({})", filename, crate::date::format_datetime(secs)),
+            None => filename.to_string(),
+        };
+        insert_leaf(&mut root_map, &components, &label);
     }
 
     println!("{}", to_termtree(root, &root_map));
@@ -521,18 +547,28 @@ pub fn cmd_list_all(common_git_dir: &str) {
         std::process::exit(1);
     }
 
-    // rel path -> [(hash, [worktree indices])]
-    let mut file_variants: BTreeMap<String, Vec<(String, Vec<usize>)>> = BTreeMap::new();
+    // rel path -> [(hash, [worktree indices], earliest mtime seen for this content)]
+    let mut file_variants: BTreeMap<String, Vec<FileVariant>> = BTreeMap::new();
 
     for (i, wt) in wts.iter().enumerate() {
         let idx = i + 1;
         for rel in gather_sideload_files(&wt.path, common_git_dir) {
             let abs = Path::new(&wt.path).join(&rel);
             let hash = hash6(&abs);
+            let mtime = file_mtime_secs(&abs);
             let variants = file_variants.entry(rel).or_default();
-            match variants.iter_mut().find(|(h, _)| *h == hash) {
-                Some((_, indices)) => indices.push(idx),
-                None => variants.push((hash, vec![idx])),
+            match variants.iter_mut().find(|(h, _, _)| *h == hash) {
+                Some((_, indices, earliest)) => {
+                    indices.push(idx);
+                    // Identical content should carry the same (preserved) mtime;
+                    // if copies predate mtime preservation, the earliest mtime
+                    // seen is the closest approximation of the true edit time.
+                    *earliest = match (*earliest, mtime) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
+                    };
+                }
+                None => variants.push((hash, vec![idx], mtime)),
             }
         }
     }
@@ -547,13 +583,16 @@ pub fn cmd_list_all(common_git_dir: &str) {
     for (rel, variants) in &file_variants {
         let components: Vec<&str> = rel.split('/').collect();
         let filename = components.last().copied().unwrap_or(rel.as_str());
-        for (hash, indices) in variants {
+        for (hash, indices, mtime) in variants {
             let indices_str = indices
                 .iter()
                 .map(|i| i.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            let label = format!("{} ({}) [{}]", filename, hash, indices_str);
+            let date_str = mtime
+                .map(crate::date::format_datetime)
+                .unwrap_or_else(|| "unknown".to_string());
+            let label = format!("{} ({}, {}) [{}]", filename, hash, date_str, indices_str);
             insert_leaf(&mut root_map, &components, &label);
             total_versions += 1;
         }
