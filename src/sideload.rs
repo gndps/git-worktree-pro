@@ -114,6 +114,24 @@ pub fn cmd_edit(common_git_dir: &str, config: &GwtpConfig) {
     }
 }
 
+/// `gwtp sideload exclude` — explicitly re-sync the MANAGED BLOCK in
+/// `.git/info/exclude` from the current `sideload_patterns` file. `add`/`rm`/
+/// `edit` already do this; this command is for when the patterns file was
+/// edited some other way (or you just want to confirm it's in sync).
+pub fn cmd_exclude(common_git_dir: &str) {
+    let patterns = load_patterns(common_git_dir);
+    match crate::config::sync_managed_block(common_git_dir, &patterns) {
+        Ok(_) => eprintln!(
+            "✅ Synced {} pattern(s) into .git/info/exclude",
+            patterns.len()
+        ),
+        Err(e) => {
+            eprintln!("❌ Failed to update .git/info/exclude: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 // ── File discovery shared by copy + list ────────────────────────────────────
 
 fn find_env_files(dir: &Path) -> Vec<PathBuf> {

@@ -43,7 +43,11 @@ aliases/functions for the commands you use most.
 local config, etc.) in sync across worktrees. Which files are managed is
 controlled by a standalone, gitignore-style pattern file at
 `<git-common-dir>/sideload_patterns` — one pattern per line, `#` for
-comments.
+comments. These patterns also get mirrored into a MANAGED BLOCK inside
+`.git/info/exclude` so the patterns count as ignore rules too; `add`,
+`rm`, and `edit` keep that block in sync automatically — `exclude` is
+there for when you edit `sideload_patterns` some other way and want to
+force the resync explicitly.
 
 | Command | Description |
 |---------|-------------|
@@ -55,6 +59,7 @@ comments.
 | `gwtp sideload rm <pattern>` | Remove a pattern |
 | `gwtp sideload list-patterns` (alias `patterns`) | Show configured patterns |
 | `gwtp sideload edit` | Open `sideload_patterns` in your configured editor |
+| `gwtp sideload exclude` | Explicitly re-sync `.git/info/exclude`'s managed block from `sideload_patterns` |
 | `gwtp sideload list` (`-l` / `l` / `--list`) | Tree of sideloaded files in the current worktree, with each file's last-modified date |
 | `gwtp sideload list-all` (`-la` / `la` / `--list-all`) | Global tree of sideloaded files across every worktree — each unique path shows a 6-char content hash, the date that content was last modified, and the worktree indices holding that version, so you can spot divergence before basing/copying files between worktrees |
 

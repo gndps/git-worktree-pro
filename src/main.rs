@@ -214,6 +214,8 @@ enum SideloadCommands {
     ListPatterns,
     /// Open the sideload_patterns file in the configured editor
     Edit,
+    /// Re-sync .git/info/exclude's managed block from sideload_patterns
+    Exclude,
     /// Tree of sideloaded files in the current worktree
     #[command(visible_alias = "l")]
     List,
@@ -275,6 +277,7 @@ fn main() {
                 }
                 SideloadCommands::ListPatterns => sideload::cmd_list_patterns(&common_git_dir),
                 SideloadCommands::Edit => sideload::cmd_edit(&common_git_dir, &cfg),
+                SideloadCommands::Exclude => sideload::cmd_exclude(&common_git_dir),
                 SideloadCommands::List => sideload::cmd_list(&common_git_dir),
                 SideloadCommands::ListAll => sideload::cmd_list_all(&common_git_dir),
             }
