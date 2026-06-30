@@ -1,11 +1,21 @@
 use crate::config::GwtpConfig;
 use crate::git::{git_main_root, git_toplevel};
 use crate::worktree::{get_wt_config_mtime, get_worktree_path, sorted_worktrees};
-use std::collections::BTreeMap;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::WalkBuilder;
+use rayon::prelude::*;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use termtree::Tree;
+
+/// Directories never worth descending into while looking for sideload-managed
+/// files — dependency/build trees that can dwarf the rest of the repo.
+const SKIP_DIRS: &[&str] = &[
+    "node_modules", ".git", "vendor", ".next", "target", "dist", "build",
+    ".venv", "venv", "__pycache__", ".cache", ".turbo",
+];
 
 // ── Pattern storage (standalone gitignore-style flat file) ─────────────────
 
@@ -133,47 +143,70 @@ pub fn cmd_exclude(common_git_dir: &str) {
 }
 
 // ── File discovery shared by copy + list ────────────────────────────────────
+//
+// The old implementation shelled out to `git ls-files --others --ignored
+// --exclude-from=<patterns>` per pattern source, per worktree. That flag is
+// *additive* on top of .gitignore/.git/info/exclude/core.excludesFile — so it
+// actually returned every git-ignored file in the tree (node_modules,
+// target/, dist/, ...), not just files matching our sideload patterns. That
+// both produced wrong results and, combined with a `git hash-object` spawn
+// per matched file in `list-all`, made it spend most of its time forking
+// processes for files nobody asked to sideload.
+//
+// This version matches only our own patterns in-process with the `ignore`
+// crate (no git subprocess per file), walks each worktree once while pruning
+// known dependency/build directories, and asks git which paths are tracked
+// with a single `git ls-files` call per worktree so already-tracked files
+// aren't pulled in by an overly broad pattern.
 
-fn find_env_files(dir: &Path) -> Vec<PathBuf> {
-    let mut results = Vec::new();
-    collect_env_files(dir, &mut results, 0);
-    results
+/// Builds an in-memory gitignore-style matcher from `sideload_patterns` and
+/// the legacy `.worktree.config`, both already gitignore-formatted files.
+fn build_pattern_matcher(root: &str, common_git_dir: &str) -> Gitignore {
+    let mut builder = GitignoreBuilder::new(root);
+    let patterns_file = patterns_file_path(common_git_dir);
+    if patterns_file.exists() {
+        let _ = builder.add(&patterns_file);
+    }
+    let wt_config = Path::new(root).join(".worktree.config");
+    if wt_config.exists() {
+        let _ = builder.add(&wt_config);
+    }
+    builder.build().unwrap_or_else(|_| Gitignore::empty())
 }
 
-fn collect_env_files(dir: &Path, results: &mut Vec<PathBuf>, depth: u32) {
-    if depth > 4 {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if path.is_dir() {
-            if matches!(name_str.as_ref(), "node_modules" | ".git" | "vendor" | ".next" | "target") {
-                continue;
-            }
-            collect_env_files(&path, results, depth + 1);
-        } else if name_str.starts_with(".env") {
-            results.push(path);
-        }
-    }
-}
-
-fn ls_files_via_exclude(source: &str, exclude_file: &Path) -> Vec<String> {
+/// Relative paths (POSIX-style) git considers tracked in `root`, via a single
+/// `git ls-files` call — avoids a subprocess per candidate file.
+fn tracked_files(root: &str) -> HashSet<String> {
     let out = Command::new("git")
-        .current_dir(source)
-        .args(["ls-files", "--others", "--ignored", "--exclude-from"])
-        .arg(exclude_file)
+        .current_dir(root)
+        .args(["ls-files", "-z"])
         .output();
-    let Ok(o) = out else { return Vec::new() };
+    let Ok(o) = out else { return HashSet::new() };
     if !o.status.success() {
-        return Vec::new();
+        return HashSet::new();
     }
-    String::from_utf8_lossy(&o.stdout)
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(String::from)
+    o.stdout
+        .split(|&b| b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).to_string())
+        .collect()
+}
+
+/// Every file under `root`, skipping known dependency/build directories.
+/// A single bounded walk replaces the old per-pattern-source git subprocess.
+fn walk_candidate_files(root: &str) -> Vec<PathBuf> {
+    WalkBuilder::new(root)
+        .standard_filters(false) // we apply our own patterns below, not .gitignore
+        .hidden(false) // don't skip dotfiles like .env
+        .follow_links(false)
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || !SKIP_DIRS.contains(&entry.file_name().to_string_lossy().as_ref())
+        })
+        .build()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .map(|e| e.into_path())
         .collect()
 }
 
@@ -181,29 +214,35 @@ fn ls_files_via_exclude(source: &str, exclude_file: &Path) -> Vec<String> {
 /// `.worktree.config` manage for `root`. Shared by the copy commands and the
 /// `list`/`list-all` views so they always agree on what's "sideloaded".
 pub fn gather_sideload_files(root: &str, common_git_dir: &str) -> Vec<String> {
-    let mut set = std::collections::BTreeSet::new();
+    let matcher = build_pattern_matcher(root, common_git_dir);
+    let tracked = tracked_files(root);
 
-    for f in find_env_files(Path::new(root)) {
-        if let Ok(rel) = f.strip_prefix(root) {
-            set.insert(rel.to_string_lossy().to_string());
-        }
-    }
+    let mut files: Vec<String> = walk_candidate_files(root)
+        .into_iter()
+        .filter_map(|abs| {
+            let rel = abs.strip_prefix(root).ok()?;
+            let rel_str = rel.to_string_lossy().to_string();
+            let is_env = abs
+                .file_name()
+                .map(|n| n.to_string_lossy().starts_with(".env"))
+                .unwrap_or(false);
+            if is_env {
+                return Some(rel_str);
+            }
+            if tracked.contains(&rel_str) {
+                return None; // already version-controlled, not "sideloaded"
+            }
+            if matcher.matched(rel, false).is_ignore() {
+                Some(rel_str)
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    let patterns_file = patterns_file_path(common_git_dir);
-    if patterns_file.exists() {
-        for f in ls_files_via_exclude(root, &patterns_file) {
-            set.insert(f);
-        }
-    }
-
-    let wt_config = Path::new(root).join(".worktree.config");
-    if wt_config.exists() {
-        for f in ls_files_via_exclude(root, &wt_config) {
-            set.insert(f);
-        }
-    }
-
-    set.into_iter().collect()
+    files.sort();
+    files.dedup();
+    files
 }
 
 // ── Copying ──────────────────────────────────────────────────────────────────
@@ -490,6 +529,10 @@ enum Entry {
 /// indices that hold it, and the earliest mtime seen for that content.
 type FileVariant = (String, Vec<usize>, Option<i64>);
 
+/// One discovered (rel path, hash, mtime, worktree index) reading, before
+/// it's merged into `FileVariant`s.
+type FileReading = (String, String, Option<i64>, usize);
+
 fn insert_leaf(map: &mut BTreeMap<String, Entry>, components: &[&str], leaf_label: &str) {
     if components.len() <= 1 {
         map.insert(leaf_label.to_string(), Entry::Leaf);
@@ -514,15 +557,14 @@ fn to_termtree(name: String, map: &BTreeMap<String, Entry>) -> Tree<String> {
     Tree::new(name).with_leaves(leaves)
 }
 
+/// 6-char content fingerprint, hashed in-process (no subprocess spawn per
+/// file — this used to shell out to `git hash-object` for every matched
+/// file in every worktree, which dominated `list-all`'s runtime).
 fn hash6(abs_path: &Path) -> String {
-    Command::new("git")
-        .args(["hash-object", &abs_path.to_string_lossy()])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .map(|s| s.chars().take(6).collect())
-        .unwrap_or_else(|| "??????".to_string())
+    match fs::read(abs_path) {
+        Ok(bytes) => blake3::hash(&bytes).to_hex()[..6].to_string(),
+        Err(_) => "??????".to_string(),
+    }
 }
 
 /// `gwtp sideload list` — tree of files sideload patterns manage in the
@@ -565,29 +607,44 @@ pub fn cmd_list_all(common_git_dir: &str) {
         std::process::exit(1);
     }
 
+    // Discover + hash every worktree's sideload files in parallel (file
+    // discovery, hashing, and mtime reads are exactly the work that used to
+    // serialize on subprocess spawns). rayon's collect() preserves the
+    // source order, so worktree indices stay correctly ascending below.
+    let per_worktree: Vec<Vec<FileReading>> = wts
+        .par_iter()
+        .enumerate()
+        .map(|(i, wt)| {
+            let idx = i + 1;
+            gather_sideload_files(&wt.path, common_git_dir)
+                .into_par_iter()
+                .map(|rel| {
+                    let abs = Path::new(&wt.path).join(&rel);
+                    let hash = hash6(&abs);
+                    let mtime = file_mtime_secs(&abs);
+                    (rel, hash, mtime, idx)
+                })
+                .collect()
+        })
+        .collect();
+
     // rel path -> [(hash, [worktree indices], earliest mtime seen for this content)]
     let mut file_variants: BTreeMap<String, Vec<FileVariant>> = BTreeMap::new();
 
-    for (i, wt) in wts.iter().enumerate() {
-        let idx = i + 1;
-        for rel in gather_sideload_files(&wt.path, common_git_dir) {
-            let abs = Path::new(&wt.path).join(&rel);
-            let hash = hash6(&abs);
-            let mtime = file_mtime_secs(&abs);
-            let variants = file_variants.entry(rel).or_default();
-            match variants.iter_mut().find(|(h, _, _)| *h == hash) {
-                Some((_, indices, earliest)) => {
-                    indices.push(idx);
-                    // Identical content should carry the same (preserved) mtime;
-                    // if copies predate mtime preservation, the earliest mtime
-                    // seen is the closest approximation of the true edit time.
-                    *earliest = match (*earliest, mtime) {
-                        (Some(a), Some(b)) => Some(a.min(b)),
-                        (a, b) => a.or(b),
-                    };
-                }
-                None => variants.push((hash, vec![idx], mtime)),
+    for (rel, hash, mtime, idx) in per_worktree.into_iter().flatten() {
+        let variants = file_variants.entry(rel).or_default();
+        match variants.iter_mut().find(|(h, _, _)| *h == hash) {
+            Some((_, indices, earliest)) => {
+                indices.push(idx);
+                // Identical content should carry the same (preserved) mtime;
+                // if copies predate mtime preservation, the earliest mtime
+                // seen is the closest approximation of the true edit time.
+                *earliest = match (*earliest, mtime) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
             }
+            None => variants.push((hash, vec![idx], mtime)),
         }
     }
 
