@@ -41,13 +41,25 @@ aliases/functions for the commands you use most.
 
 "Sideload" is how `gwtp` keeps untracked, per-worktree files (`.env*`,
 local config, etc.) in sync across worktrees. Which files are managed is
-controlled by a standalone, gitignore-style pattern file at
-`<git-common-dir>/sideload_patterns` — one pattern per line, `#` for
-comments. These patterns also get mirrored into a MANAGED BLOCK inside
-`.git/info/exclude` so the patterns count as ignore rules too; `add`,
-`rm`, and `edit` keep that block in sync automatically — `exclude` is
-there for when you edit `sideload_patterns` some other way and want to
-force the resync explicitly.
+controlled by a standalone JSON file at
+`<git-common-dir>/sideload_patterns.json`, with two gitignore-syntax
+pattern lists:
+
+```json
+{
+  "sideload_and_ignore": ["local/", "config/local.json"],
+  "sideload_only": ["visible_dir/"]
+}
+```
+
+Both lists are sideloaded (copied between worktrees) the same way. The
+difference is `sideload_and_ignore` patterns are also mirrored into a
+MANAGED BLOCK inside `.git/info/exclude`, so git treats them as ignored;
+`sideload_only` patterns are left out of `.git/info/exclude`, so matched
+files still show up in `git status` — useful when you want a file synced
+across worktrees without hiding it from git. As in `.gitignore`, a
+directory pattern (`local/`) covers every file beneath it, not just files
+directly inside it.
 
 | Command | Description |
 |---------|-------------|
@@ -55,11 +67,11 @@ force the resync explicitly.
 | `gwtp sideload base [--from <spec>] [paths...]` | Broadcast sideload files from a source worktree to all others |
 | `gwtp sideload cp-from <wt>` | Copy sideload files from worktree into current |
 | `gwtp sideload cp-to <wt>` | Copy sideload files from current into worktree |
-| `gwtp sideload add <pattern>` | Add a pattern |
-| `gwtp sideload rm <pattern>` | Remove a pattern |
-| `gwtp sideload list-patterns` (alias `patterns`) | Show configured patterns |
-| `gwtp sideload edit` | Open `sideload_patterns` in your configured editor |
-| `gwtp sideload exclude` | Explicitly re-sync `.git/info/exclude`'s managed block from `sideload_patterns` |
+| `gwtp sideload add <pattern> [--only]` | Add a pattern (`--only` adds to `sideload_only` instead of `sideload_and_ignore`) |
+| `gwtp sideload rm <pattern>` | Remove a pattern (from either list) |
+| `gwtp sideload list-patterns` (alias `patterns`) | Show configured patterns, by list |
+| `gwtp sideload edit` | Open `sideload_patterns.json` in your configured editor |
+| `gwtp sideload exclude` | Explicitly re-sync `.git/info/exclude`'s managed block from `sideload_and_ignore` |
 | `gwtp sideload list` (`-l` / `l` / `--list`) | Tree of sideloaded files in the current worktree, with each file's last-modified date |
 | `gwtp sideload list-all` (`-la` / `la` / `--list-all`) | Global tree of sideloaded files across every worktree — each unique path shows a 6-char content hash, the date that content was last modified, and the worktree indices holding that version, so you can spot divergence before basing/copying files between worktrees |
 

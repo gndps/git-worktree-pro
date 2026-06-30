@@ -204,17 +204,20 @@ enum SideloadCommands {
     /// Add a sideload pattern (gitignore syntax)
     Add {
         pattern: Vec<String>,
+        /// Keep this pattern out of .git/info/exclude, so matches still show in `git status`
+        #[arg(long)]
+        only: bool,
     },
-    /// Remove a sideload pattern
+    /// Remove a sideload pattern (from either list)
     Rm {
         pattern: Vec<String>,
     },
     /// Show configured sideload patterns
     #[command(visible_alias = "patterns")]
     ListPatterns,
-    /// Open the sideload_patterns file in the configured editor
+    /// Open sideload_patterns.json in the configured editor
     Edit,
-    /// Re-sync .git/info/exclude's managed block from sideload_patterns
+    /// Re-sync .git/info/exclude's managed block from sideload_and_ignore patterns
     Exclude,
     /// Tree of sideloaded files in the current worktree
     #[command(visible_alias = "l")]
@@ -269,8 +272,8 @@ fn main() {
                 }
                 SideloadCommands::CpFrom { target } => sideload::cmd_cp_from(&target, &common_git_dir),
                 SideloadCommands::CpTo { target } => sideload::cmd_cp_to(&target, &common_git_dir),
-                SideloadCommands::Add { pattern } => {
-                    sideload::cmd_add_pattern(&common_git_dir, &pattern.join(" "))
+                SideloadCommands::Add { pattern, only } => {
+                    sideload::cmd_add_pattern(&common_git_dir, &pattern.join(" "), only)
                 }
                 SideloadCommands::Rm { pattern } => {
                     sideload::cmd_rm_pattern(&common_git_dir, &pattern.join(" "))

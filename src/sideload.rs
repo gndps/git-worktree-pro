@@ -4,6 +4,7 @@ use crate::worktree::{get_wt_config_mtime, get_worktree_path, sorted_worktrees};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,29 +18,81 @@ const SKIP_DIRS: &[&str] = &[
     ".venv", "venv", "__pycache__", ".cache", ".turbo",
 ];
 
-// ── Pattern storage (standalone gitignore-style flat file) ─────────────────
+// ── Pattern storage (standalone JSON file) ──────────────────────────────────
+
+/// `sideload_and_ignore` patterns are sideloaded *and* mirrored into the
+/// `.git/info/exclude` MANAGED BLOCK, so git also treats matched files as
+/// ignored. `sideload_only` patterns are sideloaded but never written to
+/// `.git/info/exclude`, so matched files still show up in `git status` —
+/// useful when you want a file copied between worktrees without hiding it
+/// from git.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct SideloadPatterns {
+    #[serde(default)]
+    pub sideload_and_ignore: Vec<String>,
+    #[serde(default)]
+    pub sideload_only: Vec<String>,
+}
+
+impl SideloadPatterns {
+    fn contains(&self, pattern: &str) -> bool {
+        self.sideload_and_ignore.iter().any(|p| p == pattern)
+            || self.sideload_only.iter().any(|p| p == pattern)
+    }
+
+    fn all(&self) -> impl Iterator<Item = &String> {
+        self.sideload_and_ignore.iter().chain(self.sideload_only.iter())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.sideload_and_ignore.is_empty() && self.sideload_only.is_empty()
+    }
+}
 
 pub fn patterns_file_path(common_git_dir: &str) -> PathBuf {
-    Path::new(common_git_dir).join("sideload_patterns")
+    Path::new(common_git_dir).join("sideload_patterns.json")
 }
 
-pub fn load_patterns(common_git_dir: &str) -> Vec<String> {
+pub fn load_patterns(common_git_dir: &str) -> SideloadPatterns {
     migrate_legacy_patterns(common_git_dir);
     let path = patterns_file_path(common_git_dir);
-    let Ok(content) = fs::read_to_string(&path) else { return Vec::new() };
-    content
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(String::from)
-        .collect()
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
+/// Migrates older pattern storage formats, newest-first: the standalone
+/// flat gitignore-style file used by v0.2.0–v0.2.4, then `sync_patterns`
+/// inside `gwtp.json` from before that. Both only ever synced to
+/// `.git/info/exclude`, so they become `sideload_and_ignore` patterns.
 fn migrate_legacy_patterns(common_git_dir: &str) {
-    let path = patterns_file_path(common_git_dir);
-    if path.exists() {
+    let new_path = patterns_file_path(common_git_dir);
+    if new_path.exists() {
         return;
     }
+
+    let old_flat_path = Path::new(common_git_dir).join("sideload_patterns");
+    if let Ok(content) = fs::read_to_string(&old_flat_path) {
+        let lines: Vec<String> = content
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(String::from)
+            .collect();
+        eprintln!(
+            "🔄 Migrating {} pattern(s) from {} to {}",
+            lines.len(),
+            old_flat_path.display(),
+            new_path.display()
+        );
+        let patterns = SideloadPatterns { sideload_and_ignore: lines, sideload_only: Vec::new() };
+        write_patterns_file(&new_path, &patterns);
+        let _ = fs::remove_file(&old_flat_path);
+        let _ = crate::config::sync_managed_block(common_git_dir, &patterns.sideload_and_ignore);
+        return;
+    }
+
     let legacy = crate::config::load_config(common_git_dir).legacy_sync_patterns;
     if legacy.is_empty() {
         return;
@@ -47,47 +100,53 @@ fn migrate_legacy_patterns(common_git_dir: &str) {
     eprintln!(
         "🔄 Migrating {} legacy sync_patterns from gwtp.json to {}",
         legacy.len(),
-        path.display()
+        new_path.display()
     );
-    write_patterns_file(&path, &legacy);
-    let _ = crate::config::sync_managed_block(common_git_dir, &legacy);
+    let patterns = SideloadPatterns { sideload_and_ignore: legacy, sideload_only: Vec::new() };
+    write_patterns_file(&new_path, &patterns);
+    let _ = crate::config::sync_managed_block(common_git_dir, &patterns.sideload_and_ignore);
 }
 
-fn write_patterns_file(path: &Path, patterns: &[String]) {
-    let mut content = String::from("# gwtp sideload patterns — gitignore syntax, one pattern per line\n");
-    for p in patterns {
-        content.push_str(p);
-        content.push('\n');
+fn write_patterns_file(path: &Path, patterns: &SideloadPatterns) {
+    if let Ok(content) = serde_json::to_string_pretty(patterns) {
+        let _ = fs::write(path, content + "\n");
     }
-    let _ = fs::write(path, content);
 }
 
-pub fn save_patterns(common_git_dir: &str, patterns: &[String]) -> Result<(), String> {
+pub fn save_patterns(common_git_dir: &str, patterns: &SideloadPatterns) -> Result<(), String> {
     write_patterns_file(&patterns_file_path(common_git_dir), patterns);
-    crate::config::sync_managed_block(common_git_dir, patterns)
+    crate::config::sync_managed_block(common_git_dir, &patterns.sideload_and_ignore)
 }
 
-pub fn cmd_add_pattern(common_git_dir: &str, pattern: &str) {
+pub fn cmd_add_pattern(common_git_dir: &str, pattern: &str, only: bool) {
     let mut patterns = load_patterns(common_git_dir);
-    if patterns.iter().any(|p| p == pattern) {
+    if patterns.contains(pattern) {
         eprintln!("Pattern already exists: {}", pattern);
         return;
     }
-    patterns.push(pattern.to_string());
+    if only {
+        patterns.sideload_only.push(pattern.to_string());
+    } else {
+        patterns.sideload_and_ignore.push(pattern.to_string());
+    }
     match save_patterns(common_git_dir, &patterns) {
-        Ok(_) => eprintln!("✅ Added pattern: {}", pattern),
+        Ok(_) => eprintln!(
+            "✅ Added {} pattern: {}",
+            if only { "sideload-only" } else { "sideload+ignore" },
+            pattern
+        ),
         Err(e) => eprintln!("❌ Error: {}", e),
     }
 }
 
 pub fn cmd_rm_pattern(common_git_dir: &str, pattern: &str) {
     let mut patterns = load_patterns(common_git_dir);
-    let before = patterns.len();
-    patterns.retain(|p| p != pattern);
-    if patterns.len() == before {
+    if !patterns.contains(pattern) {
         eprintln!("Pattern not found: {}", pattern);
         return;
     }
+    patterns.sideload_and_ignore.retain(|p| p != pattern);
+    patterns.sideload_only.retain(|p| p != pattern);
     match save_patterns(common_git_dir, &patterns) {
         Ok(_) => eprintln!("✅ Removed pattern: {}", pattern),
         Err(e) => eprintln!("❌ Error: {}", e),
@@ -100,8 +159,13 @@ pub fn cmd_list_patterns(common_git_dir: &str) {
         println!("(no sideload patterns configured — see `gwtp sideload edit`)");
         return;
     }
-    for p in &patterns {
-        println!("{}", p);
+    println!("sideload_and_ignore (mirrored into .git/info/exclude):");
+    for p in &patterns.sideload_and_ignore {
+        println!("  {}", p);
+    }
+    println!("sideload_only (kept out of .git/info/exclude, visible in git status):");
+    for p in &patterns.sideload_only {
+        println!("  {}", p);
     }
 }
 
@@ -119,21 +183,21 @@ pub fn cmd_edit(common_git_dir: &str, config: &GwtpConfig) {
         std::process::exit(1);
     }
     let patterns = load_patterns(common_git_dir);
-    if let Err(e) = crate::config::sync_managed_block(common_git_dir, &patterns) {
+    if let Err(e) = crate::config::sync_managed_block(common_git_dir, &patterns.sideload_and_ignore) {
         eprintln!("⚠️  Failed to update .git/info/exclude: {}", e);
     }
 }
 
 /// `gwtp sideload exclude` — explicitly re-sync the MANAGED BLOCK in
-/// `.git/info/exclude` from the current `sideload_patterns` file. `add`/`rm`/
+/// `.git/info/exclude` from `sideload_and_ignore` patterns. `add`/`rm`/
 /// `edit` already do this; this command is for when the patterns file was
 /// edited some other way (or you just want to confirm it's in sync).
 pub fn cmd_exclude(common_git_dir: &str) {
     let patterns = load_patterns(common_git_dir);
-    match crate::config::sync_managed_block(common_git_dir, &patterns) {
+    match crate::config::sync_managed_block(common_git_dir, &patterns.sideload_and_ignore) {
         Ok(_) => eprintln!(
             "✅ Synced {} pattern(s) into .git/info/exclude",
-            patterns.len()
+            patterns.sideload_and_ignore.len()
         ),
         Err(e) => {
             eprintln!("❌ Failed to update .git/info/exclude: {}", e);
@@ -159,13 +223,14 @@ pub fn cmd_exclude(common_git_dir: &str) {
 // with a single `git ls-files` call per worktree so already-tracked files
 // aren't pulled in by an overly broad pattern.
 
-/// Builds an in-memory gitignore-style matcher from `sideload_patterns` and
-/// the legacy `.worktree.config`, both already gitignore-formatted files.
+/// Builds an in-memory gitignore-style matcher from both pattern lists
+/// (`sideload_and_ignore` + `sideload_only` — both are sideloaded, they only
+/// differ in whether they're mirrored to `.git/info/exclude`) plus the
+/// legacy `.worktree.config` file.
 fn build_pattern_matcher(root: &str, common_git_dir: &str) -> Gitignore {
     let mut builder = GitignoreBuilder::new(root);
-    let patterns_file = patterns_file_path(common_git_dir);
-    if patterns_file.exists() {
-        let _ = builder.add(&patterns_file);
+    for p in load_patterns(common_git_dir).all() {
+        let _ = builder.add_line(None, p);
     }
     let wt_config = Path::new(root).join(".worktree.config");
     if wt_config.exists() {
@@ -232,7 +297,11 @@ pub fn gather_sideload_files(root: &str, common_git_dir: &str) -> Vec<String> {
             if tracked.contains(&rel_str) {
                 return None; // already version-controlled, not "sideloaded"
             }
-            if matcher.matched(rel, false).is_ignore() {
+            // `matched()` only tests the file's own path; a directory
+            // pattern like `local/` needs `matched_path_or_any_parents()`
+            // to also catch every file beneath it (gitignore semantics:
+            // an ignored directory implies everything inside it).
+            if matcher.matched_path_or_any_parents(rel, false).is_ignore() {
                 Some(rel_str)
             } else {
                 None
