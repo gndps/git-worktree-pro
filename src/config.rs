@@ -11,10 +11,13 @@ pub struct GwtpConfig {
     pub hidden_wt_prefixes: Vec<String>,
     #[serde(default = "default_hidden_br")]
     pub hidden_branch_prefixes: Vec<String>,
-    #[serde(default)]
-    pub sync_patterns: Vec<String>,
     #[serde(default = "default_editor")]
     pub editor: String,
+    /// Legacy field: sideload patterns used to live here. Read-only — kept so
+    /// existing `gwtp.json` files can be migrated to the standalone
+    /// `sideload_patterns` file. Never written back out.
+    #[serde(default, rename = "sync_patterns", skip_serializing)]
+    pub legacy_sync_patterns: Vec<String>,
 }
 
 fn default_hidden_wt() -> Vec<String> {
@@ -34,8 +37,8 @@ impl Default for GwtpConfig {
         Self {
             hidden_wt_prefixes: default_hidden_wt(),
             hidden_branch_prefixes: default_hidden_br(),
-            sync_patterns: Vec::new(),
             editor: default_editor(),
+            legacy_sync_patterns: Vec::new(),
         }
     }
 }
@@ -57,11 +60,11 @@ pub fn save_config(common_git_dir: &str, config: &GwtpConfig) -> Result<(), Stri
     let path = config_path(common_git_dir);
     let content =
         serde_json::to_string_pretty(config).map_err(|e| format!("serialize: {}", e))?;
-    fs::write(&path, content).map_err(|e| format!("write config: {}", e))?;
-    sync_managed_block(common_git_dir, config)
+    fs::write(&path, content).map_err(|e| format!("write config: {}", e))
 }
 
-pub fn sync_managed_block(common_git_dir: &str, config: &GwtpConfig) -> Result<(), String> {
+/// Rewrites the MANAGED BLOCK in `.git/info/exclude` to match `patterns`.
+pub fn sync_managed_block(common_git_dir: &str, patterns: &[String]) -> Result<(), String> {
     let exclude_path = Path::new(common_git_dir).join("info").join("exclude");
 
     if exclude_path.is_symlink() {
@@ -77,14 +80,14 @@ pub fn sync_managed_block(common_git_dir: &str, config: &GwtpConfig) -> Result<(
     let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
     let mut new_content = remove_managed_block(&existing);
 
-    if !config.sync_patterns.is_empty() {
+    if !patterns.is_empty() {
         if !new_content.ends_with('\n') && !new_content.is_empty() {
             new_content.push('\n');
         }
         new_content.push('\n');
         new_content.push_str(MANAGED_BEGIN);
         new_content.push('\n');
-        for p in &config.sync_patterns {
+        for p in patterns {
             new_content.push_str(p);
             new_content.push('\n');
         }
@@ -118,7 +121,8 @@ fn remove_managed_block(content: &str) -> String {
 
 pub fn cmd_config(args: &[String], common_git_dir: &str) {
     if args.is_empty() {
-        eprintln!("Usage: gwtp config <add|rm|list|set-hidden-wt|set-hidden-br|set-editor|edit> [args...]");
+        eprintln!("Usage: gwtp config <list|set-hidden-wt|set-hidden-br|set-editor|edit> [args...]");
+        eprintln!("Note: sideload pattern management moved to `gwtp sideload add|rm|list-patterns|edit`.");
         return;
     }
     let mut config = load_config(common_git_dir);
@@ -127,40 +131,6 @@ pub fn cmd_config(args: &[String], common_git_dir: &str) {
             println!("editor:                {}", config.editor);
             println!("hidden_wt_prefixes:    {:?}", config.hidden_wt_prefixes);
             println!("hidden_branch_prefixes:{:?}", config.hidden_branch_prefixes);
-            println!("sync_patterns:         {:?}", config.sync_patterns);
-        }
-        "add" => {
-            if args.len() < 2 {
-                eprintln!("Usage: gwtp config add <pattern>");
-                return;
-            }
-            let pattern = args[1..].join(" ");
-            if config.sync_patterns.contains(&pattern) {
-                eprintln!("Pattern already exists: {}", pattern);
-                return;
-            }
-            config.sync_patterns.push(pattern.clone());
-            match save_config(common_git_dir, &config) {
-                Ok(_) => eprintln!("✅ Added pattern: {}", pattern),
-                Err(e) => eprintln!("❌ Error: {}", e),
-            }
-        }
-        "rm" => {
-            if args.len() < 2 {
-                eprintln!("Usage: gwtp config rm <pattern>");
-                return;
-            }
-            let pattern = args[1..].join(" ");
-            let before = config.sync_patterns.len();
-            config.sync_patterns.retain(|p| p != &pattern);
-            if config.sync_patterns.len() == before {
-                eprintln!("Pattern not found: {}", pattern);
-                return;
-            }
-            match save_config(common_git_dir, &config) {
-                Ok(_) => eprintln!("✅ Removed pattern: {}", pattern),
-                Err(e) => eprintln!("❌ Error: {}", e),
-            }
         }
         "set-hidden-wt" => {
             config.hidden_wt_prefixes = args[1..].iter().map(|s| s.clone()).collect();
@@ -203,6 +173,9 @@ pub fn cmd_config(args: &[String], common_git_dir: &str) {
                     eprintln!("❌ Failed to open editor '{}': {}", config.editor, e);
                     std::process::exit(1);
                 });
+        }
+        "add" | "rm" => {
+            eprintln!("⚠️  Sideload patterns moved: use `gwtp sideload {} <pattern>` instead.", args[0]);
         }
         _ => eprintln!("Unknown config command: {}", args[0]),
     }

@@ -8,77 +8,55 @@ A comprehensive git worktree management toolkit, available as a single binary (`
 brew install gndps/tap/git-worktree-pro
 ```
 
-## Setup
-
-Add to your `.bashrc` or `.zshrc`:
-
-```bash
-# Source the aliases file installed by gwtp
-source "$(gwtp --aliases-path 2>/dev/null)" 2>/dev/null
-```
-
-Or manually source the bundled aliases:
-
-```bash
-# Core aliases
-alias wls='gwtp list'
-alias wlst='gwtp list --status'
-alias wlsd='gwtp list-detail'
-alias wlsl='gwtp list-log'
-alias wll='gwtp tree'
-wta() { eval "$(gwtp add "$@")"; }
-wtar() { eval "$(gwtp add-random)"; }
-alias wtin='gwtp init'
-wcd() { eval "$(gwtp cd "$@")"; }
-alias wwi='gwtp open'
-alias wwif='gwtp open-pick'
-alias wcp='gwtp copy-name'
-alias wrn='gwtp rename'
-alias wrm='gwtp remove'
-alias wdiff='gwtp diff'
-alias wtn='gwtp note'
-alias wtt='gwtp slug'
-alias gsd='gwtp status'
-```
+`gwtp` has no shell aliases bundled — invoke it directly, or define your own
+aliases/functions for the commands you use most.
 
 ## Commands
 
-| Alias | Command | Description |
-|-------|---------|-------------|
-| `wls` | `gwtp list` | List worktrees |
-| `wlst` | `gwtp list --status` | List with git status |
-| `wlsd` | `gwtp list-detail` | List with full status |
-| `wlsl` | `gwtp list-log` | List with recent commits |
-| `wll` | `gwtp tree` | Tree view with commit history |
-| `wta` | `gwtp add <branch>` | Create worktree at `~/.worktrees/<branch>/<repo>` |
-| `wtar` | `gwtp add-random` | Create worktree with random suffix |
-| `wtin` | `gwtp init` | Sync all worktrees from main |
-| `wtbase` | `gwtp base` | Broadcast config files to all worktrees |
-| `wtcpfrom` | `gwtp cp-from <wt>` | Copy config from WT to current |
-| `wtcpto` | `gwtp cp-to <wt>` | Copy config from current to WT |
-| `wcd` | `gwtp cd <wt>` | Navigate to worktree |
-| `wwi` | `gwtp open <wt>` | Open worktree in Windsurf |
-| `wwif` | `gwtp open-pick` | Pick worktree with fzf |
-| `wcp` | `gwtp copy-name <N>` | Copy folder name to clipboard |
-| `wrn` | `gwtp rename <wt> <name>` | Rename worktree directory |
-| `wrm` | `gwtp remove <wt>` | Remove worktree |
-| `wdiff` | `gwtp diff <P> <C>` | Diff between worktrees |
-| `wdiffc` | `gwtp diff-code <P> <C>` | Diff in Windsurf |
-| `wdiffl` | `gwtp diff-list <P> <C>` | Numstat diff |
-| `wdiffa` | `gwtp diff-all <P> <C>` | Working dir diff |
-| `wtn` | `gwtp note [text]` | Get/set worktree note |
-| `wtt` | `gwtp slug [name]` | Get/set repo slug |
-| `gsd` | `gwtp status` | Compact git status |
+| Command | Description |
+|---------|-------------|
+| `gwtp list [--all] [--status]` | List worktrees |
+| `gwtp list-detail [--all]` | List with full git status |
+| `gwtp list-log [--all]` | List with recent commits |
+| `gwtp tree [count] [--all]` | Tree view with commit history |
+| `gwtp add <branch> [--from <src>]` | Create worktree at `~/.worktrees/<branch>/<repo>` |
+| `gwtp add-random` | Create worktree with random suffix |
+| `gwtp cd <wt>` | Navigate to worktree (prints `cd '<path>'` for eval) |
+| `gwtp open <wt>` | Open worktree in editor |
+| `gwtp open-pick [--all]` | Pick worktree with fzf |
+| `gwtp copy-name <N>` | Copy folder name to clipboard |
+| `gwtp rename <wt> <name>` | Rename worktree directory |
+| `gwtp remove <wt> [--force]` | Remove worktree |
+| `gwtp diff <P> <C>` | Diff committed changes between worktrees |
+| `gwtp diff-code <P> <C>` | Open diff in editor |
+| `gwtp diff-list <P> <C>` | Numstat diff |
+| `gwtp diff-all <P> <C>` | Working dir diff |
+| `gwtp note [text]` | Get/set worktree note |
+| `gwtp slug [name]` | Get/set repo slug |
+| `gwtp status` | Compact git status |
+| `gwtp config <list\|set-hidden-wt\|set-hidden-br\|set-editor\|edit>` | General config |
+| `gwtp sideload <subcommand>` | Sideloaded file management — see below |
 
-### Config management
+### Sideload
 
-```bash
-gwtp config list                   # Show current config
-gwtp config add <pattern>          # Add sync pattern
-gwtp config rm <pattern>           # Remove sync pattern
-gwtp config set-hidden-wt _ emdash # Set hidden WT prefixes
-gwtp config set-hidden-br _        # Set hidden branch prefixes
-```
+"Sideload" is how `gwtp` keeps untracked, per-worktree files (`.env*`,
+local config, etc.) in sync across worktrees. Which files are managed is
+controlled by a standalone, gitignore-style pattern file at
+`<git-common-dir>/sideload_patterns` — one pattern per line, `#` for
+comments.
+
+| Command | Description |
+|---------|-------------|
+| `gwtp sideload init [--all]` | Sideload into all visible worktrees from main root |
+| `gwtp sideload base [--from <spec>] [paths...]` | Broadcast sideload files from a source worktree to all others |
+| `gwtp sideload cp-from <wt>` | Copy sideload files from worktree into current |
+| `gwtp sideload cp-to <wt>` | Copy sideload files from current into worktree |
+| `gwtp sideload add <pattern>` | Add a pattern |
+| `gwtp sideload rm <pattern>` | Remove a pattern |
+| `gwtp sideload list-patterns` (alias `patterns`) | Show configured patterns |
+| `gwtp sideload edit` | Open `sideload_patterns` in your configured editor |
+| `gwtp sideload list` (`-l` / `l` / `--list`) | Tree of sideloaded files in the current worktree |
+| `gwtp sideload list-all` (`-la` / `la` / `--list-all`) | Global tree of sideloaded files across every worktree — each unique path shows a 6-char content hash and the worktree indices holding that version, so you can spot divergence before basing/copying files between worktrees |
 
 ### Prompt integration
 
@@ -90,7 +68,7 @@ gwtp prompt json     # JSON for oh-my-posh
 
 ## How worktrees are organized
 
-New worktrees are created at `~/.worktrees/<branch-name>/<repo-name>`. Environment files (`.env*`) and patterns from `gwtp config` are automatically synced to new worktrees.
+New worktrees are created at `~/.worktrees/<branch-name>/<repo-name>`. Environment files (`.env*`) and sideload patterns are automatically copied into new worktrees.
 
 ## Hidden worktrees
 

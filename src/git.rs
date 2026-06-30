@@ -37,7 +37,14 @@ pub fn git_main_root() -> Option<String> {
 }
 
 pub fn git_common_dir() -> Option<String> {
-    git(&["rev-parse", "--git-common-dir"]).ok()
+    let dir = git(&["rev-parse", "--git-common-dir"]).ok()?;
+    // May be relative to the current process cwd (e.g. ".git"); callers pass
+    // it as a path argument to git commands run with other working
+    // directories, so it must be absolute.
+    std::fs::canonicalize(&dir)
+        .map(|p| p.to_string_lossy().to_string())
+        .ok()
+        .or(Some(dir))
 }
 
 pub fn git_dir() -> Option<String> {

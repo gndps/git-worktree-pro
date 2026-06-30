@@ -6,9 +6,9 @@ mod navigate;
 mod notes;
 mod ops;
 mod prompt;
+mod sideload;
 mod slug;
 mod status;
-mod sync;
 mod worktree;
 
 use clap::{Parser, Subcommand};
@@ -22,7 +22,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// List worktrees [wls / wlst]
+    /// List worktrees
     List {
         /// Show hidden worktrees
         #[arg(short, long)]
@@ -31,17 +31,17 @@ enum Commands {
         #[arg(short, long)]
         status: bool,
     },
-    /// List worktrees with detailed git status [wlsd]
+    /// List worktrees with detailed git status
     ListDetail {
         #[arg(short, long)]
         all: bool,
     },
-    /// List worktrees with recent commit log [wlsl]
+    /// List worktrees with recent commit log
     ListLog {
         #[arg(short, long)]
         all: bool,
     },
-    /// Tree view with commit history [wll]
+    /// Tree view with commit history
     Tree {
         /// Number of commits to show per worktree
         #[arg(default_value = "10")]
@@ -49,7 +49,7 @@ enum Commands {
         #[arg(short, long)]
         all: bool,
     },
-    /// Create a new worktree [wta]  — prints `cd '<path>'` to stdout
+    /// Create a new worktree — prints `cd '<path>'` to stdout
     Add {
         /// Branch name to create or checkout
         branch: String,
@@ -57,86 +57,69 @@ enum Commands {
         #[arg(long)]
         from: Option<String>,
     },
-    /// Create a worktree with a random suffix [wtar]
+    /// Create a worktree with a random suffix
     AddRandom,
-    /// Initialize (sync) all worktrees from main [wtin]
-    Init {
-        #[arg(short, long)]
-        all: bool,
+    /// Manage sideloaded files: patterns, broadcasting, and inspection
+    Sideload {
+        #[command(subcommand)]
+        command: Option<SideloadCommands>,
     },
-    /// Broadcast config files to all worktrees [wtbase]
-    Base {
-        /// Source: "latest", a worktree index, or omit for current
-        #[arg(long)]
-        from: Option<String>,
-        /// Specific paths to broadcast instead of config files
-        paths: Vec<String>,
-    },
-    /// Copy config files from specified worktree to current [wtcpfrom]
-    CpFrom {
-        /// Target worktree (index, branch, or name)
-        target: String,
-    },
-    /// Copy config files from current worktree to specified [wtcpto]
-    CpTo {
-        target: String,
-    },
-    /// Navigate to a worktree (prints `cd '<path>'` for eval) [wcd]
+    /// Navigate to a worktree (prints `cd '<path>'` for eval)
     Cd {
         target: String,
     },
-    /// Open worktree in editor [wwi]
+    /// Open worktree in editor
     Open {
         target: String,
     },
-    /// Pick and open worktree with fzf [wwif]
+    /// Pick and open worktree with fzf
     OpenPick {
         #[arg(short, long)]
         all: bool,
     },
-    /// Copy worktree folder name to clipboard [wcp]
+    /// Copy worktree folder name to clipboard
     CopyName {
         index: usize,
     },
-    /// Rename worktree directory [wrn / wren]
+    /// Rename worktree directory
     Rename {
         /// Worktree to rename (index, branch, or name)
         target: String,
         /// New directory name
         new_name: String,
     },
-    /// Remove a worktree [wrm]
+    /// Remove a worktree
     Remove {
         target: String,
         #[arg(short, long)]
         force: bool,
     },
-    /// Diff committed changes between two worktrees [wdiff]
+    /// Diff committed changes between two worktrees
     Diff {
         parent_index: usize,
         child_index: usize,
     },
-    /// Open two worktrees in editor [wdiffc]
+    /// Open two worktrees in editor
     DiffCode {
         parent_index: usize,
         child_index: usize,
     },
-    /// Numstat diff between two worktrees [wdiffl]
+    /// Numstat diff between two worktrees
     DiffList {
         parent_index: usize,
         child_index: usize,
     },
-    /// All (working dir) diff between two worktrees [wdiffa]
+    /// All (working dir) diff between two worktrees
     DiffAll {
         parent_index: usize,
         child_index: usize,
     },
-    /// Get or set a note for the current worktree [wtn]
+    /// Get or set a note for the current worktree
     Note {
         /// Note text to set (omit to get current note)
         text: Vec<String>,
     },
-    /// Get or set the repo slug [wtt]
+    /// Get or set the repo slug
     Slug {
         /// Slug to set (omit to get current slug)
         name: Option<String>,
@@ -156,17 +139,66 @@ enum Commands {
         #[arg(long, value_name = "FONT", num_args = 0..=1, default_missing_value = "")]
         figlet: Option<String>,
     },
-    /// Show compact git status [gsd]
+    /// Show compact git status
     Status,
     /// Manage gwtp configuration
     Config {
-        /// Subcommand: list, add <pattern>, rm <pattern>, set-hidden-wt, set-hidden-br
+        /// Subcommand: list, set-hidden-wt, set-hidden-br, set-editor, edit
         args: Vec<String>,
     },
 }
 
+#[derive(Subcommand)]
+enum SideloadCommands {
+    /// Sideload into all visible worktrees from main root
+    Init {
+        #[arg(short, long)]
+        all: bool,
+    },
+    /// Broadcast sideload files from a source worktree to all others
+    Base {
+        /// Source: "latest", a worktree index, or omit for current
+        #[arg(long)]
+        from: Option<String>,
+        /// Specific paths to broadcast instead of sideload-managed files
+        paths: Vec<String>,
+    },
+    /// Copy sideload files from specified worktree into current
+    CpFrom {
+        /// Source worktree (index, branch, or name)
+        target: String,
+    },
+    /// Copy sideload files from current worktree into specified
+    CpTo {
+        target: String,
+    },
+    /// Add a sideload pattern (gitignore syntax)
+    Add {
+        pattern: Vec<String>,
+    },
+    /// Remove a sideload pattern
+    Rm {
+        pattern: Vec<String>,
+    },
+    /// Show configured sideload patterns
+    #[command(visible_alias = "patterns")]
+    ListPatterns,
+    /// Open the sideload_patterns file in the configured editor
+    Edit,
+    /// Tree of sideloaded files in the current worktree
+    #[command(visible_alias = "l")]
+    List,
+    /// Global tree of sideloaded files across all worktrees
+    #[command(visible_alias = "la")]
+    ListAll,
+}
+
 fn main() {
-    let cli = Cli::parse();
+    // Allow `gwtp sideload --list`/`-l`/`--list-all`/`-la` to also be spelled
+    // as bare subcommand tokens (`list`/`l`/`list-all`/`la`), since clap
+    // subcommand aliases can't start with a dash.
+    let raw_args: Vec<String> = normalize_args(std::env::args().collect());
+    let cli = Cli::parse_from(raw_args);
 
     // Resolve common git dir (needed for config operations)
     let common_git_dir = git::git_common_dir().unwrap_or_default();
@@ -197,21 +229,30 @@ fn main() {
             require_git();
             ops::cmd_add_random(&common_git_dir);
         }
-        Commands::Init { all } => {
+        Commands::Sideload { command } => {
             require_git();
-            ops::cmd_init(all, &cfg, &common_git_dir);
-        }
-        Commands::Base { from, paths } => {
-            require_git();
-            ops::cmd_base(from.as_deref(), &paths, &cfg, &common_git_dir);
-        }
-        Commands::CpFrom { target } => {
-            require_git();
-            ops::cmd_cp_from(&target, &common_git_dir);
-        }
-        Commands::CpTo { target } => {
-            require_git();
-            ops::cmd_cp_to(&target, &common_git_dir);
+            match command {
+                Some(SideloadCommands::Init { all }) => sideload::cmd_init(all, &cfg, &common_git_dir),
+                Some(SideloadCommands::Base { from, paths }) => {
+                    sideload::cmd_base(from.as_deref(), &paths, &cfg, &common_git_dir)
+                }
+                Some(SideloadCommands::CpFrom { target }) => sideload::cmd_cp_from(&target, &common_git_dir),
+                Some(SideloadCommands::CpTo { target }) => sideload::cmd_cp_to(&target, &common_git_dir),
+                Some(SideloadCommands::Add { pattern }) => {
+                    sideload::cmd_add_pattern(&common_git_dir, &pattern.join(" "))
+                }
+                Some(SideloadCommands::Rm { pattern }) => {
+                    sideload::cmd_rm_pattern(&common_git_dir, &pattern.join(" "))
+                }
+                Some(SideloadCommands::ListPatterns) => sideload::cmd_list_patterns(&common_git_dir),
+                Some(SideloadCommands::Edit) => sideload::cmd_edit(&common_git_dir, &cfg),
+                Some(SideloadCommands::List) => sideload::cmd_list(&common_git_dir),
+                Some(SideloadCommands::ListAll) => sideload::cmd_list_all(&common_git_dir),
+                None => {
+                    eprintln!("Usage: gwtp sideload <init|base|cp-from|cp-to|add|rm|list-patterns|edit|list|list-all>");
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Cd { target } => {
             require_git();
@@ -283,6 +324,25 @@ fn main() {
             config::cmd_config(&args, &common_git_dir);
         }
     }
+}
+
+/// Rewrites `gwtp sideload -l/--list/-la/--list-all` into the equivalent bare
+/// subcommand token (`l`/`list`/`la`/`list-all`) so both spellings work.
+fn normalize_args(args: Vec<String>) -> Vec<String> {
+    if args.len() < 3 || args[1] != "sideload" {
+        return args;
+    }
+    let mut out = args;
+    let token = out[2].as_str();
+    let replacement = match token {
+        "-l" | "--list" => Some("list"),
+        "-la" | "--list-all" => Some("list-all"),
+        _ => None,
+    };
+    if let Some(r) = replacement {
+        out[2] = r.to_string();
+    }
+    out
 }
 
 fn require_git() {
