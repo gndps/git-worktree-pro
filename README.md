@@ -26,7 +26,7 @@ aliases/functions for the commands you use most.
 | `gwtp open-pick [--all]` | Pick worktree with fzf |
 | `gwtp copy-name <N>` | Copy folder name to clipboard |
 | `gwtp rename <wt> <name>` | Rename worktree directory |
-| `gwtp remove <wt> [--force]` | Remove worktree |
+| `gwtp remove [-f] <wt>...` | Remove one or more worktrees (e.g. `gwtp remove -f 2 3 4`); also handles broken, locked, and non-gwtp worktrees |
 | `gwtp diff <P> <C>` | Diff committed changes between worktrees |
 | `gwtp diff-code <P> <C>` | Open diff in editor |
 | `gwtp diff-list <P> <C>` | Numstat diff |

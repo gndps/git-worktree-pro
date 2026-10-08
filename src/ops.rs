@@ -1,6 +1,6 @@
-use crate::git::{git_in, git_main_root, git_toplevel, git_current_branch};
+use crate::git::{git_common_dir, git_current_branch, git_in, git_main_root, git_toplevel};
 use crate::sideload::sideload_worktree_files;
-use crate::worktree::{get_worktree_path, sorted_worktrees};
+use crate::worktree::{get_worktree_path, sorted_worktrees, Worktree};
 use std::path::Path;
 use std::process::Command;
 
@@ -107,37 +107,114 @@ fn rand_hex(bytes: usize) -> String {
     }
 }
 
-/// Remove a worktree
-pub fn cmd_remove(target: &str, force: bool) {
+/// Remove one or more worktrees. All targets are resolved against the same
+/// listing up front, so `gwtp remove 2 3 4` means the indices shown by `gwtp list`.
+pub fn cmd_remove(targets: &[String], force: bool) {
     let wts = sorted_worktrees();
-    let target_path = get_worktree_path(target, &wts).unwrap_or_else(|| {
-        eprintln!("❌ Worktree '{}' not found.", target);
-        std::process::exit(1);
-    });
-    let current_root = git_toplevel().unwrap_or_default();
-    if target_path == current_root {
-        let main_root = git_main_root().unwrap_or_default();
-        if target_path == main_root {
+    let main_root = git_main_root().unwrap_or_default();
+
+    let mut resolved: Vec<&Worktree> = Vec::new();
+    let mut failed = false;
+    for target in targets {
+        let Some(path) = get_worktree_path(target, &wts) else {
+            eprintln!("❌ Worktree '{}' not found.", target);
+            failed = true;
+            continue;
+        };
+        let Some(wt) = wts.iter().find(|w| w.path == path) else { continue };
+        if wt.is_main || wt.path == main_root {
             eprintln!("❌ Cannot remove the main worktree.");
-            std::process::exit(1);
+            failed = true;
+            continue;
         }
+        if !resolved.iter().any(|w| w.path == wt.path) {
+            resolved.push(wt);
+        }
+    }
+    if failed {
+        eprintln!("❌ Nothing removed.");
+        std::process::exit(1);
     }
 
-    if force {
-        eprintln!("🗑️  Force removing worktree: {}", target_path);
-        Command::new("git")
-            .args(["worktree", "remove", "--force", &target_path])
-            .status()
-            .ok();
-    } else {
-        eprintln!("🗑️  Removing worktree: {}", target_path);
-        let status = Command::new("git")
-            .args(["worktree", "remove", &target_path])
-            .status();
-        if !status.map(|s| s.success()).unwrap_or(false) {
-            std::process::exit(1);
+    for wt in resolved {
+        if !remove_one(wt, force) {
+            failed = true;
         }
     }
+    if failed {
+        std::process::exit(1);
+    }
+}
+
+fn remove_one(wt: &Worktree, force: bool) -> bool {
+    let path = wt.path.as_str();
+
+    // Broken worktree: its .git file is gone (e.g. /tmp cleanup), so
+    // `git worktree remove` refuses it. Unregister it directly instead.
+    if wt.is_prunable {
+        eprintln!("🗑️  Removing broken worktree: {}", path);
+        let Some(admin) = find_admin_dir(path) else {
+            eprintln!("❌ Could not find git metadata for '{}'.", path);
+            return false;
+        };
+        if let Err(e) = std::fs::remove_dir_all(&admin) {
+            eprintln!("❌ Failed to unregister '{}': {}", path, e);
+            return false;
+        }
+        if Path::new(path).exists() {
+            if force {
+                if let Err(e) = std::fs::remove_dir_all(path) {
+                    eprintln!("⚠️  Unregistered, but failed to delete directory: {}", e);
+                    return false;
+                }
+            } else {
+                eprintln!("ℹ️  Unregistered; leftover directory kept (use -f to delete): {}", path);
+            }
+        }
+        return true;
+    }
+
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        eprintln!("🗑️  Force removing worktree: {}", path);
+        args.push("--force");
+        if wt.is_locked {
+            // A locked worktree needs the force flag twice.
+            args.push("--force");
+        }
+    } else {
+        eprintln!("🗑️  Removing worktree: {}", path);
+    }
+    args.push(path);
+    let ok = Command::new("git")
+        .args(&args)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        eprintln!("❌ Failed to remove '{}'.", path);
+    }
+    ok
+}
+
+/// Find `<common-git-dir>/worktrees/<id>` whose `gitdir` points at `<path>/.git`.
+fn find_admin_dir(path: &str) -> Option<std::path::PathBuf> {
+    let common = git_common_dir()?;
+    let expected = Path::new(path).join(".git");
+    let entries = std::fs::read_dir(Path::new(&common).join("worktrees")).ok()?;
+    for entry in entries.flatten() {
+        let Ok(gitdir) = std::fs::read_to_string(entry.path().join("gitdir")) else { continue };
+        let gitdir = Path::new(gitdir.trim());
+        let same = gitdir == expected
+            || matches!(
+                (gitdir.parent().and_then(|p| p.canonicalize().ok()), Path::new(path).canonicalize().ok()),
+                (Some(a), Some(b)) if a == b
+            );
+        if same {
+            return Some(entry.path());
+        }
+    }
+    None
 }
 
 /// Rename worktree directory

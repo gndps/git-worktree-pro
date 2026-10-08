@@ -17,6 +17,16 @@ pub const WHITE: &str = "\x1b[0;37m";
 pub const RED: &str = "\x1b[31m";
 pub const GREEN: &str = "\x1b[32m";
 
+/// " (not managed by gwtp, ...)" in red/gray, or "" for ordinary gwtp worktrees.
+fn tag_suffix(wt: &Worktree) -> String {
+    let tags = wt.display_tags();
+    if tags.is_empty() {
+        return String::new();
+    }
+    let color = if wt.is_prunable { RED } else { GRAY };
+    format!(" {}{}{}", color, tags, RESET)
+}
+
 pub fn cmd_list(show_all: bool, show_status: bool, config: &GwtpConfig) {
     let wts = sorted_worktrees();
     if wts.is_empty() {
@@ -69,23 +79,17 @@ pub fn cmd_list(show_all: bool, show_status: bool, config: &GwtpConfig) {
         let bd = wt.display_branch();
         let note = get_wt_note(&wt.path).unwrap_or_default();
 
-        if show_status {
-            let status = &statuses[idx];
-            if !status.is_empty() {
-                println!(
-                    "{}[{}{}]{} {}{}{}  {}{}{}",
-                    YELLOW, marker, num, RESET, CYAN_BOLD, bd, RESET, GRAY, status, RESET
-                );
-            } else {
-                println!(
-                    "{}[{}{}]{} {}{}{}",
-                    YELLOW, marker, num, RESET, CYAN_BOLD, bd, RESET
-                );
-            }
+        let tags = tag_suffix(wt);
+        let status = &statuses[idx];
+        if !status.is_empty() {
+            println!(
+                "{}[{}{}]{} {}{}{}{}  {}{}{}",
+                YELLOW, marker, num, RESET, CYAN_BOLD, bd, RESET, tags, GRAY, status, RESET
+            );
         } else {
             println!(
-                "{}[{}{}]{} {}{}{}",
-                YELLOW, marker, num, RESET, CYAN_BOLD, bd, RESET
+                "{}[{}{}]{} {}{}{}{}",
+                YELLOW, marker, num, RESET, CYAN_BOLD, bd, RESET, tags
             );
         }
 
@@ -125,7 +129,7 @@ pub fn cmd_list_detail(show_all: bool, config: &GwtpConfig) {
     for (num, wt) in &visible {
         let bd = wt.display_branch();
         let note = get_wt_note(&wt.path).unwrap_or_default();
-        println!("{}[{}]{} {}{}{}", YELLOW, num, RESET, CYAN_BOLD, bd, RESET);
+        println!("{}[{}]{} {}{}{}{}", YELLOW, num, RESET, CYAN_BOLD, bd, RESET, tag_suffix(wt));
         if !note.is_empty() {
             println!("    {}☁️  {}{}", SKY_BLUE, note, RESET);
         }
@@ -169,7 +173,7 @@ pub fn cmd_list_log(show_all: bool, config: &GwtpConfig) {
     for (num, wt) in &visible {
         let bd = wt.display_branch();
         let note = get_wt_note(&wt.path).unwrap_or_default();
-        println!("{}[{}]{} {}{}{}", YELLOW, num, RESET, CYAN_BOLD, bd, RESET);
+        println!("{}[{}]{} {}{}{}{}", YELLOW, num, RESET, CYAN_BOLD, bd, RESET, tag_suffix(wt));
         if !note.is_empty() {
             println!("    {}☁️  {}{}", SKY_BLUE, note, RESET);
         }
@@ -295,6 +299,8 @@ fn print_tree_node(
     );
     if is_root {
         label.push_str(&format!("{}(Main){}", DIM, RESET));
+    } else {
+        label.push_str(tag_suffix(wt).trim_start());
     }
     if !node.note.is_empty() {
         label.push_str(&format!("  {}☁️  {}{}", SKY_BLUE, node.note, RESET));

@@ -8,10 +8,40 @@ pub struct Worktree {
     pub is_bare: bool,
     pub is_detached: bool,
     pub is_main: bool,
+    pub is_locked: bool,
+    pub is_prunable: bool,
     pub mtime: u64,
 }
 
 impl Worktree {
+    /// True when the worktree lives where `gwtp add` creates them (~/.worktrees/...).
+    pub fn is_managed(&self) -> bool {
+        if self.is_main {
+            return true;
+        }
+        let home = std::env::var("HOME").unwrap_or_default();
+        !home.is_empty() && self.path.starts_with(&format!("{home}/.worktrees/"))
+    }
+
+    /// Dim tags describing worktrees gwtp did not create or that git considers broken.
+    pub fn display_tags(&self) -> String {
+        let mut tags = Vec::new();
+        if !self.is_managed() {
+            tags.push("not managed by gwtp");
+        }
+        if self.is_prunable {
+            tags.push("broken: .git missing");
+        }
+        if self.is_locked {
+            tags.push("locked");
+        }
+        if tags.is_empty() {
+            String::new()
+        } else {
+            format!("({})", tags.join(", "))
+        }
+    }
+
     pub fn name(&self) -> &str {
         std::path::Path::new(&self.path)
             .file_name()
@@ -46,9 +76,12 @@ pub fn list_worktrees_raw() -> Vec<Worktree> {
     let mut branch = String::new();
     let mut is_bare = false;
     let mut is_detached = false;
+    let mut is_locked = false;
+    let mut is_prunable = false;
     let mut is_first = true;
 
-    let flush = |path: &str, hash: &str, branch: &str, is_bare: bool, is_detached: bool, is_main: bool, result: &mut Vec<Worktree>| {
+    #[allow(clippy::too_many_arguments)]
+    let flush = |path: &str, hash: &str, branch: &str, is_bare: bool, is_detached: bool, is_main: bool, is_locked: bool, is_prunable: bool, result: &mut Vec<Worktree>| {
         if !path.is_empty() {
             result.push(Worktree {
                 path: path.to_string(),
@@ -57,6 +90,8 @@ pub fn list_worktrees_raw() -> Vec<Worktree> {
                 is_bare,
                 is_detached,
                 is_main,
+                is_locked,
+                is_prunable,
                 mtime: 0,
             });
         }
@@ -64,7 +99,7 @@ pub fn list_worktrees_raw() -> Vec<Worktree> {
 
     for line in s.lines() {
         if line.is_empty() {
-            flush(&path, &hash, &branch, is_bare, is_detached, is_first, &mut result);
+            flush(&path, &hash, &branch, is_bare, is_detached, is_first, is_locked, is_prunable, &mut result);
             if !path.is_empty() {
                 is_first = false;
             }
@@ -73,6 +108,12 @@ pub fn list_worktrees_raw() -> Vec<Worktree> {
             branch.clear();
             is_bare = false;
             is_detached = false;
+            is_locked = false;
+            is_prunable = false;
+        } else if line == "locked" || line.starts_with("locked ") {
+            is_locked = true;
+        } else if line == "prunable" || line.starts_with("prunable ") {
+            is_prunable = true;
         } else if let Some(v) = line.strip_prefix("worktree ") {
             path = v.to_string();
         } else if let Some(v) = line.strip_prefix("HEAD ") {
@@ -85,7 +126,7 @@ pub fn list_worktrees_raw() -> Vec<Worktree> {
             is_detached = true;
         }
     }
-    flush(&path, &hash, &branch, is_bare, is_detached, is_first, &mut result);
+    flush(&path, &hash, &branch, is_bare, is_detached, is_first, is_locked, is_prunable, &mut result);
 
     result
 }

@@ -89,9 +89,11 @@ enum Commands {
         /// New directory name
         new_name: String,
     },
-    /// Remove a worktree
+    /// Remove one or more worktrees (e.g. `gwtp remove -f 2 3 4`)
     Remove {
-        target: String,
+        /// Worktrees to remove (index, branch, or name)
+        #[arg(required = true, num_args = 1..)]
+        targets: Vec<String>,
         #[arg(short, long)]
         force: bool,
     },
@@ -305,9 +307,9 @@ fn main() {
             require_git();
             ops::cmd_rename(&target, &new_name);
         }
-        Commands::Remove { target, force } => {
+        Commands::Remove { targets, force } => {
             require_git();
-            ops::cmd_remove(&target, force);
+            ops::cmd_remove(&targets, force);
         }
         Commands::Diff { parent_index, child_index } => {
             require_git();
