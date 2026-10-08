@@ -136,12 +136,25 @@ pub fn cmd_remove(targets: &[String], force: bool) {
         std::process::exit(1);
     }
 
-    for wt in resolved {
-        if !remove_one(wt, force) {
-            failed = true;
-        }
-    }
-    if failed {
+    // Paths are fixed above, so removals are independent and can run in parallel.
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(resolved.len().max(1));
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .expect("failed to build thread pool");
+    let all_ok = pool.install(|| {
+        use rayon::prelude::*;
+        resolved
+            .par_iter()
+            .map(|wt| remove_one(wt, force))
+            .collect::<Vec<bool>>()
+            .into_iter()
+            .all(|ok| ok)
+    });
+    if !all_ok {
         std::process::exit(1);
     }
 }
@@ -164,13 +177,14 @@ fn remove_one(wt: &Worktree, force: bool) -> bool {
         if Path::new(path).exists() {
             if force {
                 if let Err(e) = std::fs::remove_dir_all(path) {
-                    eprintln!("⚠️  Unregistered, but failed to delete directory: {}", e);
+                    eprintln!("⚠️  Unregistered, but failed to delete directory '{}': {}", path, e);
                     return false;
                 }
             } else {
                 eprintln!("ℹ️  Unregistered; leftover directory kept (use -f to delete): {}", path);
             }
         }
+        eprintln!("✅ Removed: {}", path);
         return true;
     }
 
@@ -186,15 +200,22 @@ fn remove_one(wt: &Worktree, force: bool) -> bool {
         eprintln!("🗑️  Removing worktree: {}", path);
     }
     args.push(path);
-    let ok = Command::new("git")
-        .args(&args)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !ok {
-        eprintln!("❌ Failed to remove '{}'.", path);
+    // Capture git's output so parallel removals don't interleave mid-line.
+    match Command::new("git").args(&args).output() {
+        Ok(o) if o.status.success() => {
+            eprintln!("✅ Removed: {}", path);
+            true
+        }
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            eprintln!("❌ Failed to remove '{}': {}", path, err.trim());
+            false
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to remove '{}': {}", path, e);
+            false
+        }
     }
-    ok
 }
 
 /// Find `<common-git-dir>/worktrees/<id>` whose `gitdir` points at `<path>/.git`.
